@@ -1,0 +1,8 @@
+# Comma-separated list of package or module names containing tests.
+test_package_names: tests
+
+# Regular expression of modules which to include in tests.
+test_module_pattern: ^[\w]+_test$
+
+# URL path to the web interface of aeta.
+url_path: /tests/

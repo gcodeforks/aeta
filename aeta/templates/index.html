@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block body %}
+
+<h1>{{ title }}</h1>
+
+  <!-- import errors -->
+  {% if import_errors %}
+    {% ifnotequal import_errors 0 %}
+      <h2>Import Errors</h2>
+      <ul class="aet-error">
+      {% for item in import_errors %}
+        <li><a href="{{ importcheck_url }}{{ item.0 }}">{{ item.0 }}</a></li>
+      {% endfor %}
+      </ul>
+    {% endifnotequal %}
+  {% endif %}
+
+  <!-- available tests -->
+  <a name="automatic"></a>
+  <h2>Automatic Tests</h2>
+  <a href="{{ automatic_url }}">
+    Run all automatic tests
+  </a>
+  {% if moduledata %}
+    <ul class="aet-testmodule aet-nested-list">
+    {% for module in moduledata %}
+      {% if module.load_error %}
+      <!-- skip modules which could not be imported -->
+      {% else %}
+        <li class="aet-testmodule">
+          <a href="{{ automatic_url }}{{ module.fullname }}">
+            {{ module.fullname }}
+          </a>
+        </li>
+        <ul class="aet-testcase">
+        {% for item in module.tests.items %}
+          <li class="aet-testcase">
+            <a href="{{ automatic_url }}{{ module.fullname }}.{{ item.0 }}">
+              {{ module.fullname }}.{{ item.0 }}
+            </a>
+            <ul class="aet-testmethod">
+            {% for testmethod in item.1 %}
+              <li class="aet-testmethod">
+                <a href="{{ automatic_url }}{{ module.fullname }}.{{ item.0 }}.{{ testmethod }}">
+                  {{ module.fullname }}.{{ item.0 }}.{{ testmethod }}
+                </a>
+              </li>
+              {% endfor %}
+              </ul>
+            </li>
+          {% endfor %}
+          </ul>
+        </li>
+      {% endif %}
+    {% endfor %}
+    </ul>
+  {% endif %}
+
+{% endblock %}

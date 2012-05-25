@@ -1,0 +1,81 @@
+===============================
+App Engine Test Appendix (AETA)
+===============================
+
+Short Description
+=================
+
+A test runner for Python App Engine that allows run tests in App Engine
+environments.
+
+
+Installation
+============
+
+You can install this library in addition to your existing application. No
+changes to your existing app are required.
+
+1. Copy the aeta directory into the application's root directory.
+2. Add the following snippet to your app.yaml file:
+
+  - url: /tests/.*
+    script: aeta/main.py
+
+  It will behave as any other app.yaml entry. For example, you can add access
+  restrictions.
+
+
+Configuration
+=============
+
+If you stick to the defaults, no configuration is needed at all. The default
+settings can be found at aeta/aeta.yaml.
+
+If you want to customize aeta's configuration copy the aeta.yaml into your
+app's root directory and tweak the settings to your needs.
+
+Among several options, you can define packages which contain tests, a pattern
+to identify test-relevant modules, or set the URL path at which your tests will
+be accessible.
+
+
+Random
+======
+
+Where is my debug output I did with 'print'?
+--------------------------------------------
+
+A: The Short answer is, the stdlib unittest framework ignores it, so
+it doesn't show up in aeta, either. If you are interested in details,
+read on.
+
+It is a common debugging approach to write some tests and if things
+don't work out as expected you insert some print statements to peak at
+some variable's value without resorting to an actual debugging tool.
+
+The most commonly used TestRunner is the TextTestRunner. This one runs
+the test and prints the test run results to a stream (by default
+stderr). It basically works like this:
+1.  Iterate over all test methods.
+1.a Print the name of the test method.
+1.b Print the test result.
+2.  Print the test run summary.
+
+When you insert print statements in your code, those statements are
+printed between the steps 1.a and 1.b.
+
+Now why don't those print statements show up in aeta? The
+TextTestRunner is using instances of the TestResult class to store
+test data (name, failures, errors, ect). What is missing though is the
+output of the code you tested, it is not considered to be part of the
+test. Using a TextTestRunner just makes it seem like it would be one
+and the same thing. But instead they are completely separated, just
+mixed into the same output stream.
+
+Now you might ask why do you see the print statement output in the
+static HTML interface, and not in the local_client interface. The
+answer is that while the local_client is using the test result data to
+construct the output you see, the static HTML client just dumps the
+entire test output on the screen, including your print statements. So
+if you need to do some print debugging, you have to use the HTML
+interface.

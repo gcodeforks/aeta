@@ -1,0 +1,6 @@
+The test app has a particular test data setup. Both, the unit and the
+end-to-end tests are indivually linked into the app's root directory. This
+allows us to test a custom aeta.yaml setting. Since both types of tests expect
+a tests.utils module, it separately linked as well.
+
+The same setup if mirrored in the other e2e test app.
