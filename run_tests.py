@@ -49,8 +49,7 @@ def run_unit_tests():
   suite = unittest2.TestSuite()
   for unit_test_dir in UNIT_TEST_DIRS:
     absolute_test_dir = os.path.join(ROOT_PATH, unit_test_dir)
-    suite = unittest2.loader.TestLoader().discover(absolute_test_dir,
-                                                   pattern='*_test.py')
+    suite = unittest2.loader.TestLoader().discover(absolute_test_dir)
     unittest2.TextTestRunner(verbosity=2).run(suite)
 
 
