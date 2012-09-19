@@ -38,6 +38,8 @@ export PYLINTRC=$(pwd)
 for app in testdata/e2e_{25,27}_app; do
   ln -snf `pwd`/aeta $app/aeta
   ln -snf `pwd`/lib/webtest $app/webtest
+  mkdir -p $app/testdata/
+  ln -snf `pwd`/testdata/test_modules $app/testdata/test_modules
   ln -snf `pwd`/tests/e2e $app/e2e_tests
   ln -snf `pwd`/tests/unit_and_e2e $app/unit_and_e2e_tests
   mkdir -p $app/tests/
