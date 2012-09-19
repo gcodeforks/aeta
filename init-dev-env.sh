@@ -37,10 +37,11 @@ export PYLINTRC=$(pwd)
 # Create symbolic links.
 for app in testdata/e2e_{25,27}_app; do
   ln -snf `pwd`/aeta $app/aeta
+  ln -snf `pwd`/lib $app/lib
   ln -snf `pwd`/tests/e2e $app/e2e_tests
   ln -snf `pwd`/tests/unit_and_e2e $app/unit_and_e2e_tests
   mkdir -p $app/tests/
   ln -snf `pwd`/tests/__init__.py $app/tests/__init__.py
-  ln -snf `pwd`/tests/test_utils.py $app/tests/test_utils.py
+  ln -snf `pwd`/tests/utils.py $app/tests/utils.py
 done
 ln -snf `pwd`/aeta demo/aeta
