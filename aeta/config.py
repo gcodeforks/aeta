@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """aeta configuration."""
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
+
 
 import os
 
@@ -47,16 +47,25 @@ class Config(object):
   once and not modified afterwards.
   """
 
-  # Options that can be set.
+  # Options that can be set.  See aeta.yaml for details about the options.
   SET_OPTIONS = ['test_package_names',
                  'test_module_pattern',
                  'url_path',
+                 'use_appstats',
+                 'parallelize_modules',
+                 'parallelize_classes',
+                 'parallelize_methods',
+                 'test_queue',
+                 'storage',
+                 'protected',
+                 'permitted_emails',
+                 'include_test_functions',
                  ]
 
   # Options which are computed based on url_path.
-  COMPUTED_PATH_OPTIONS = {'automatic': 'automatic' ,
-                           'importcheck': 'importcheck',
-                           'rest': 'rest',
+  COMPUTED_PATH_OPTIONS = {'rest': 'rest',
+                           'deferred': 'deferred',
+                           'static': 'static',
                            }
 
   NOT_SET = 'NOT SET'
@@ -84,19 +93,19 @@ class Config(object):
     return getattr(self, private_name)
 
   @property
-  def url_path_automatic(self):
-    """Read-only property."""
-    return self._get_path_property('automatic')
-
-  @property
-  def url_path_importcheck(self):
-    """Read-only property."""
-    return self._get_path_property('importcheck')
-
-  @property
   def url_path_rest(self):
     """Read-only property."""
     return self._get_path_property('rest')
+
+  @property
+  def url_path_deferred(self):
+    """Read-only property."""
+    return self._get_path_property('deferred')
+
+  @property
+  def url_path_static(self):
+    """Read-only property."""
+    return self._get_path_property('static')
 
 
 def _get_user_config_path():
@@ -124,6 +133,9 @@ def _load_yaml(path):
 
   This is a simple wrapper to make testing easier.
 
+  Args:
+    path: The path of the YAML configuration file.
+
   Returns:
     A dictionary matchig the data from the provided yaml file.
   """
@@ -140,12 +152,10 @@ def _parse_option(option_name, option_value):
   Returns:
     The parsed option value
   """
-  if option_name == 'test_package_names':
-    option_value = option_value.strip(',')
-    names = option_value.split(',')
-    if len(names) == 1 and not names[0]:
-      return []
-    return [name.strip() for name in names]
+  if option_name in ['test_package_names', 'permitted_emails']:
+    option_value = (option_value or '').strip(', ')
+    names = [name.strip() for name in option_value.split(',')]
+    return [name for name in names if name]
   else:
     return option_value
 

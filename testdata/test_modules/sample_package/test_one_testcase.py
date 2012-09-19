@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ module will result in failing tests, because exactly 1 test case with
 exactly 1 passing and 1 failing test is expected.
 """
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
+
 
 import unittest
 

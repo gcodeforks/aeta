@@ -12,14 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""This module represents a module without test cases.
+"""This module contains two test functions, one that passes and one that fails.
 
-This module name matches the default test module name pattern, but it
-does not contain any test cases.
-
-It is used for testing aeta.logic.
+The module is used for testing aeta functionality. Changes to this
+module will result in failing tests, because exactly 1 passing and 1 failing
+test function is expected.
 """
 
 
 
-import unittest
+
+def test_pass():
+  assert True
+
+
+def test_fail():
+  assert False, 'This test is expected to fail.'

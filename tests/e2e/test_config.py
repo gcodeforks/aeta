@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Tests for the configuration of aeta."""
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
+
 
 # Disable checking; pylint: disable-msg=C0111,W0212,R0904,C0103
 # - docstrings
