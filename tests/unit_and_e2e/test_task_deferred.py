@@ -14,7 +14,7 @@
 
 """Tests for the task_deferred module of aeta."""
 
-
+__author__ = 'jacobltaylor@google.com (Jacob Taylor)'
 
 import os
 import time

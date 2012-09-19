@@ -14,7 +14,7 @@
 
 """Tests for the models module of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 # Disable checking; pylint: disable-msg=C0111,W0212,R0904,C0103
 # - docstrings
@@ -121,7 +121,9 @@ class LoadConfigTest(unittest.TestCase):
     config.os.path.exists = lambda _: True
     self.default_config = {
         'test_package_names': 'tests',
-        'test_module_pattern': '^test_[\w]+$',
+        # MOE:begin_strip
+        'test_module_pattern': '^[\w]+_test$',
+        # MOE:end_strip_and_replace 'test_module_pattern': '^test_[\w]+$',
         'url_path': '/tests/',
         'use_appstats': False,
         'url_path': '/tests/',
@@ -130,7 +132,9 @@ class LoadConfigTest(unittest.TestCase):
         'parallelize_methods': False,
         'test_queue': 'default',
         'storage': 'datastore',
-        'protected': True,
+        # MOE:begin_strip
+        'protected': False,
+        # MOE:end_strip_and_replace 'protected': True,
         'permitted_emails': '',
         'include_test_functions': True}
     # Flag used to track if the mock _load_yaml function has been called.

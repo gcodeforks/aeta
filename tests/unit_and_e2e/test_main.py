@@ -14,7 +14,7 @@
 
 """Tests for the main module of aeta."""
 
-
+__author__ = 'jacobltaylor@google.com (Jacob Taylor)'
 
 import copy
 import unittest

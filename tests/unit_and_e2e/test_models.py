@@ -42,12 +42,10 @@ class JsonHolderTest(unittest.TestCase, utils.MockAttributeMixin):
   def setUp(self):
     self.testbed = testbed.Testbed()
     self.testbed.activate()
-    self.testbed.init_datastore_v3_stub()
-    self.testbed.init_memcache_stub()
-    self.testbed.init_files_stub()
-    if not os.environ.get('SERVER_SOFTWARE', '').startswith('Dev'):
+    self.is_dev = os.environ.get('SERVER_SOFTWARE', '').startswith('Dev')
+    if not self.is_dev:
       # Testbed blobstore doesn't work on the development server.
-      self.testbed.init_blobstore_stub()
+      self.testbed.init_all_stubs()
     self.holder = models.JsonHolder()
     self.config = copy.copy(config.get_config())
     self.cleaned_up = False
@@ -67,7 +65,8 @@ class JsonHolderTest(unittest.TestCase, utils.MockAttributeMixin):
   def tearDown(self):
     if self.holder.blob_key:
       blobstore.delete(self.holder.blob_key)
-    self.testbed.deactivate()
+    if not self.is_dev:
+      self.testbed.deactivate()
     self.tear_down_attributes()
 
   def test_not_set(self):
@@ -221,12 +220,7 @@ class DeleteBlobIfDoneTest(unittest.TestCase, utils.MockAttributeMixin):
   def setUp(self):
     self.testbed = testbed.Testbed()
     self.testbed.activate()
-    self.testbed.init_datastore_v3_stub()
-    self.testbed.init_memcache_stub()
-    self.testbed.init_files_stub()
-    if not os.environ.get('SERVER_SOFTWARE', '').startswith('Dev'):
-      # Testbed blobstore doesn't work on the development server.
-      self.testbed.init_blobstore_stub()
+    self.testbed.init_all_stubs()
     self.config = copy.copy(config.get_config())
     self.did_defer = False
     self.holder = models.JsonHolder()

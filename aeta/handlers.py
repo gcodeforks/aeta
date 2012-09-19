@@ -14,7 +14,7 @@
 
 """Basic handlers for aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import cgi
 import os

@@ -46,7 +46,7 @@ if the test object is a package, its units will be the modules within the
 package.
 """
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import functools
 import inspect
@@ -517,7 +517,7 @@ def load_module_from_module_name(fullname, errors_out=None, reload_mod=False,
   return module
 
 
-# TODO(user): too many local variables - pylint: disable-msg=R0914,R0912
+# TODO(schuppe): too many local variables - pylint: disable-msg=R0914,R0912
 def get_module_names_in_package(packagename, module_pattern, depth=0):
   """Get names of all modules in the package that match module_pattern.
 

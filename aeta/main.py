@@ -14,7 +14,7 @@
 
 """Entry point to aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import os.path
 

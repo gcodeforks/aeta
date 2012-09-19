@@ -16,7 +16,7 @@
 
 from __future__ import with_statement
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 # Classes defined here are only data containers - pylint:disable-msg=R0903
 

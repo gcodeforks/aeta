@@ -14,7 +14,7 @@
 
 """Tests for the local_client module of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 # Disable checking; pylint: disable-msg=C0111,W0212,R0904,C0103,R0902,R0201
 # - docstrings

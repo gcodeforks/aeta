@@ -14,7 +14,7 @@
 
 """Tests for the entry point of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import unittest
 

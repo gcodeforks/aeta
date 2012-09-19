@@ -19,7 +19,7 @@ module will result in failing tests, because exactly 1 test case with
 exactly 1 passing and 1 failing test is expected.
 """
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import unittest
 

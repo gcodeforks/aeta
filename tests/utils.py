@@ -14,7 +14,7 @@
 
 """Test utilities."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import os
 import sys

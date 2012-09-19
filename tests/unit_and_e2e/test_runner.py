@@ -14,7 +14,7 @@
 
 """Tests for the runner module of aeta."""
 
-
+__author__ = 'jacobltaylor@google.com (Jacob Taylor)'
 
 import copy
 import sys
@@ -410,7 +410,7 @@ class RunnerE2ETest(unittest.TestCase, utils.TestDataMixin,
     self.assertEqual([subpackage + '.test_ham.FooTest.test_fail',
                       subpackage + '.test_ham.FooTest.test_pass'], names)
 
-  # TODO(user): remove or fix this method or fix behavior.
+  # TODO(schuppe): remove or fix this method or fix behavior.
   # def test_test_module_with_no_test_cases(self):
   #   fullname = self.test_package_name + '.no_testcase_test'
   #   results = runner.load_and_run_tests(fullname)

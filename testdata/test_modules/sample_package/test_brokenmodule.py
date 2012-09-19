@@ -14,6 +14,6 @@
 
 """This module should cause an import error when imported."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import non_existing_package

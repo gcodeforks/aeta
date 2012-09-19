@@ -41,7 +41,7 @@ existing test infrastructures.
 
 """
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import cookielib
 import cgi

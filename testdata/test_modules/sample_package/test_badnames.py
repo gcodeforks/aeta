@@ -17,7 +17,7 @@
 It is used for testing aeta.logic.
 """
 
-
+__author__ = 'jacobltaylor@google.com (Jacob Taylor)'
 
 import unittest
 

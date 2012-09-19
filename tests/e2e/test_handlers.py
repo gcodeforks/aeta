@@ -14,7 +14,7 @@
 
 """Tests for the handlers module of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 # Disable checking; pylint:disable-msg=C0111,C0103,W0212
 # pylint:disable-msg=C0103,R0902,R0201,R0904

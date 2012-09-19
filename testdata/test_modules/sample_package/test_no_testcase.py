@@ -20,6 +20,6 @@ does not contain any test cases.
 It is used for testing aeta.logic.
 """
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import unittest

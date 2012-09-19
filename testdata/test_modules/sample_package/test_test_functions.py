@@ -19,7 +19,7 @@ module will result in failing tests, because exactly 1 passing and 1 failing
 test function is expected.
 """
 
-
+__author__ = 'sammc@google.com (Sam McNally)'
 
 
 def test_pass():

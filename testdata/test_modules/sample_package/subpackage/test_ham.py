@@ -14,7 +14,7 @@
 
 """A test module in a sub-package."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 
 import unittest

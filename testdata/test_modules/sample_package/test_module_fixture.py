@@ -18,7 +18,7 @@ Note that this is only relevant for Python versions >= 2.7. Previous versions
 do not support this functionality.
 """
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import sys
 import unittest

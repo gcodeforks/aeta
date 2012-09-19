@@ -24,7 +24,7 @@ name.
 It is used for testing aeta.logic.
 """
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 
 class Foo(object):
