@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Tests for the logic module of aeta."""
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
+
 
 # Disable checking; pylint:disable-msg=C0111,C0103,W0212
 # pylint:disable-msg=C0103,R0902,R0201,R0904
@@ -25,13 +25,16 @@ __author__ = 'schuppe@google.com (Robert Schuppenies)'
 # - too many instance attributes
 # - method could be a function
 
+import copy
 import inspect
 import os
 import sys
 import types
 import unittest
 
+from aeta import config
 from aeta import logic
+from aeta import models
 from tests import utils
 
 _REL_PATH = 'a/relative/path'
@@ -48,7 +51,9 @@ else:
 # Pattern of test modules.
 TEST_MODULE_PATTERN = r'^test_[\w]+$'
 
-class GetAbsPathFromPackagenameTest(unittest.TestCase):
+
+class GetAbsPathFromPackagenameTest(unittest.TestCase,
+                                    utils.MockAttributeMixin):
   """Tests for the get_abs_path_from_package_name function."""
 
   # pylint:disable-msg=C0103
@@ -56,21 +61,10 @@ class GetAbsPathFromPackagenameTest(unittest.TestCase):
     self.packagename = 'package.subpackage'
     self.abs_packagepath = os.path.join(_DEEP_ROOT_PATH, 'package',
                                         'subpackage')
-    self.orig_isdir = os.path.isdir
-    self.orig_isfile = os.path.isfile
-    self.original_path_exists = os.path.exists
-    # name okay - pylint: disable-msg=C0103
-    self.orig_load_module_from_module_name = logic.load_module_from_module_name
-    self.orig_inspect_getfile = inspect.getfile
 
   # pylint:disable-msg=C0103
   def tearDown(self):
-    os.path.isfile = self.orig_isfile
-    os.path.isdir = self.orig_isdir
-    os.path.exists = self.original_path_exists
-
-    logic.load_module_from_module_name = self.orig_load_module_from_module_name
-    inspect.getfile = self.orig_inspect_getfile
+    self.tear_down_attributes()
 
   def test_invalid_input(self):
     self.assertRaises(TypeError, logic.get_abs_path_from_package_name, None)
@@ -79,20 +73,42 @@ class GetAbsPathFromPackagenameTest(unittest.TestCase):
     self.assertEqual(None, logic.get_abs_path_from_package_name(''))
 
   def test_with_non_existing_package(self):
-    logic.load_module_from_module_name = lambda name, errors, reload_mod: None
+
+    @self.mock(logic)
+    def load_module_from_module_name(name, errors, reload_mod,
+                                     include_test_functions=True):
+      return None
     self.assertEqual(None,
                      logic.get_abs_path_from_package_name(self.packagename))
 
   def test_with_existing_package(self):
 
     # pylint: disable-msg=W0613
-    def mock_load_module(packagename, errors, reload_mod):
+    @self.mock(logic)
+    def load_module_from_module_name(packagename, errors, reload_mod,
+                                     include_test_functions=True):
       return types.ModuleType('foo')
-    logic.load_module_from_module_name = mock_load_module
-    inspect.getfile = lambda _: '%s/__init__.py' % _DEEP_ROOT_PATH
+
+    @self.mock(inspect)
+    def getfile(module):
+      return '%s/__init__.py' % _DEEP_ROOT_PATH
 
     self.assertEqual(_DEEP_ROOT_PATH + os.sep,
                      logic.get_abs_path_from_package_name(''))
+
+  def test_init_module(self):
+    """Ensure that the __init__ module is not considered a package."""
+
+    @self.mock(logic)
+    def load_module_from_module_name(packagename, errors, reload_mod,
+                                     include_test_functions=True):
+      return types.ModuleType('package.__init__')
+
+    @self.mock(inspect)
+    def getfile(module):
+      return '%s/__init__.py' % _DEEP_ROOT_PATH
+
+    self.assertEqual(None, logic.get_abs_path_from_package_name(''))
 
 
 class GetRootRelativePathTest(unittest.TestCase):
@@ -150,23 +166,6 @@ class GetRootRelativePathTest(unittest.TestCase):
     self.assertEqual(None, logic.get_root_relative_path(path, root))
 
 
-class is_moduleTest(unittest.TestCase):
-  """Tests for the is_module function."""
-
-  def test_invalid_nput(self):
-    self.assertRaises(TypeError, logic.is_module, None)
-
-  def test_empty_input(self):
-    self.assertEqual(False, logic.is_module(''))
-
-  def test_invalid_module(self):
-    self.assertEqual(False, logic.is_module('1'))
-    self.assertEqual(False, logic.is_module('--'))
-
-  def test_valid_module(self):
-    self.assertEqual(True, logic.is_module(self.__module__))
-
-
 class LoadModuleFromModuleNameTest(unittest.TestCase, utils.TestDataMixin):
   """Tests for the load_module_from_module_name function."""
 
@@ -180,19 +179,30 @@ class LoadModuleFromModuleNameTest(unittest.TestCase, utils.TestDataMixin):
     self.assertRaises(TypeError, logic.load_module_from_module_name,
                       None, [])
     self.assertRaises(TypeError, logic.load_module_from_module_name,
-                      '', None)
+                      '', 5)
     self.assertRaises(TypeError, logic.load_module_from_module_name,
                       '', [], reload_mod=None)
+    self.assertRaises(TypeError, logic.load_module_from_module_name,
+                      '', [], include_import_error=None)
+    self.assertRaises(TypeError, logic.load_module_from_module_name,
+                      '', [], include_test_functions=None)
 
-  def test_empty_module_nname(self):
+  def test_empty_module_name(self):
     self.assertEqual(None, logic.load_module_from_module_name('', []))
 
   def test_invalid_package(self):
     result_errors = []
-    result_module = logic.load_module_from_module_name('--',
-                                                   result_errors)
+    result_module = logic.load_module_from_module_name('--', result_errors)
+    self.assertEqual(None, result_module)
+    self.assertEqual([], result_errors)
+
+  def test_include_import_error(self):
+    result_errors = []
+    result_module = logic.load_module_from_module_name(
+        '--', result_errors, include_import_error=True)
     self.assertEqual(None, result_module)
     self.assertEqual(1, len(result_errors))
+    self.assertEqual('--', result_errors[0][0])
 
   def test_valid_package(self):
     result_errors = []
@@ -205,7 +215,7 @@ class LoadModuleFromModuleNameTest(unittest.TestCase, utils.TestDataMixin):
     modulename = self.test_package_name + '.test_brokenmodule'
     result_errors = []
     result_module = logic.load_module_from_module_name(modulename,
-                                                   result_errors)
+                                                       result_errors)
     self.assertEqual(None, result_module)
     self.assertEqual(1, len(result_errors))
 
@@ -213,13 +223,35 @@ class LoadModuleFromModuleNameTest(unittest.TestCase, utils.TestDataMixin):
     modulename = self.test_package_name + '.test_goodmodule'
     result_errors = []
     result_module = logic.load_module_from_module_name(modulename,
-                                                   result_errors)
+                                                       result_errors)
     self.assertNotEqual(None, result_module)
     self.assertEqual([], result_errors)
 
+  def test_test_functions(self):
+    modulename = self.test_package_name + '.test_test_functions'
+    result_errors = []
+    # include_test_functions is True by default.
+    result_module = logic.load_module_from_module_name(modulename,
+                                                       result_errors)
+    class_name = 'TestTestFunctionsWrappedTestFunctions'
+    result_class = getattr(result_module, class_name, None)
+    self.assertTrue(isinstance(result_class, type))
+    self.assertTrue(issubclass(result_class, unittest.TestCase))
 
-class LoadModulesTest(unittest.TestCase, utils.TestDataMixin):
-  """Tests for the load_modules function."""
+  def test_no_test_functions(self):
+    modulename = self.test_package_name + '.test_test_functions'
+    result_errors = []
+    # The module might have been loaded by the previous test function, which
+    # would have wrapped test functions.
+    sys.modules.pop(modulename, None)
+    result_module = logic.load_module_from_module_name(
+        modulename, result_errors, include_test_functions=False)
+    class_name = 'TestTestFunctionsWrappedTestFunctions'
+    self.assertFalse(hasattr(result_module, class_name))
+
+
+class GetModuleNamesInPackageTest(unittest.TestCase, utils.TestDataMixin):
+  """Tests for the get_module_names_in_package function."""
 
   # pylint: disable-msg=C0103
   def setUp(self):
@@ -230,57 +262,79 @@ class LoadModulesTest(unittest.TestCase, utils.TestDataMixin):
     self.tear_down_test_data()
 
   def test_invalid_input(self):
-    self.assertRaises(TypeError, logic.load_modules, None, [])
-    self.assertRaises(TypeError, logic.load_modules, '', None)
-    self.assertRaises(TypeError, logic.load_modules, '', [],
+    self.assertRaises(TypeError, logic.get_module_names_in_package, None, [])
+    self.assertRaises(TypeError, logic.get_module_names_in_package, '', None)
+    self.assertRaises(TypeError, logic.get_module_names_in_package, '', [],
                       module_pattern=None)
-    self.assertRaises(TypeError, logic.load_modules, '', [], depth=None)
+    self.assertRaises(TypeError, logic.get_module_names_in_package, '', [],
+                      depth=None)
 
   def test_empty_package_name(self):
-    result_errors = []
-    result_modules = logic.load_modules('', result_errors, TEST_MODULE_PATTERN)
+    result_modules = logic.get_module_names_in_package('', TEST_MODULE_PATTERN)
     self.assertEqual([], result_modules)
-    self.assertEqual([], result_errors)
 
   def test_invalid_package_name(self):
-    result_errors = []
-    result_modules = logic.load_modules('2', result_errors,
-                                        TEST_MODULE_PATTERN)
+    result_modules = logic.get_module_names_in_package('2',
+                                                       TEST_MODULE_PATTERN)
     self.assertEqual([], result_modules)
-    self.assertEqual([], result_errors)
 
   # acceptable name - pylint: disable-msg=C0103
   def test_valid_path_with_one_broken_module(self):
-    result_errors = []
-    result_modules = logic.load_modules(self.test_package_name,
-                                        result_errors,
-                                        TEST_MODULE_PATTERN)
-    self.assertEqual(4, len(result_modules))
-    self.assertEqual(1, len(result_errors))
+    result_modules = logic.get_module_names_in_package(self.test_package_name,
+                                                       TEST_MODULE_PATTERN)
+    self.assertEqual(9, len(result_modules))
 
   def test_depth_smaller_than_zero(self):
-    self.assertRaises(ValueError, logic.load_modules, self.test_package_name,
-                      [], TEST_MODULE_PATTERN, depth=-1)
+    self.assertRaises(ValueError, logic.get_module_names_in_package,
+                      self.test_package_name, TEST_MODULE_PATTERN, depth=-1)
 
   def test_depth_limited(self):
-    modules = logic.load_modules(self.test_package_name, [],
-                                 TEST_MODULE_PATTERN, depth=1)
+    modules = logic.get_module_names_in_package(
+        self.test_package_name, TEST_MODULE_PATTERN, depth=1)
     found_mod_from_subpackage = False
     for mod in modules:
-      if 'subpackage' in mod.__name__:
+      if 'subpackage' in mod:
         found_mod_from_subpackage = True
         break
     self.assertFalse(found_mod_from_subpackage)
 
   def test_depth_unlimited(self):
-    modules = logic.load_modules(self.test_package_name, [],
-                                 TEST_MODULE_PATTERN, depth=0)
+    modules = logic.get_module_names_in_package(
+        self.test_package_name, TEST_MODULE_PATTERN, depth=0)
     found_mod_from_subpackage = False
     for mod in modules:
-      if 'subpackage' in mod.__name__:
+      if 'subpackage' in mod:
         found_mod_from_subpackage = True
         break
     self.assertTrue(found_mod_from_subpackage)
+
+
+class IsPrefixTest(unittest.TestCase):
+  """Tests for the _is_prefix function."""
+
+  def test_is_prefix(self):
+    self.assertTrue(logic._is_prefix('package.module',
+                                     'package.module.Class.method'))
+    self.assertTrue(logic._is_prefix('', 'something'))
+    self.assertFalse(logic._is_prefix('a.b', 'a'))
+    self.assertFalse(logic._is_prefix('a.b', 'a.c'))
+    self.assertFalse(logic._is_prefix('package.module', 'package.module1'))
+    self.assertFalse(logic._is_prefix('a', ''))
+
+
+class IsInTestPackageTest(unittest.TestCase):
+  """Tests for the _is_in_test_package function."""
+
+  def test_is_in_test_package(self):
+    conf = copy.copy(config.get_config())
+    conf.test_package_names = ['a', 'b.c']
+    self.assertTrue(logic._is_in_test_package('a', conf))
+    self.assertTrue(logic._is_in_test_package('a.z', conf))
+    self.assertTrue(logic._is_in_test_package('b.c', conf))
+    self.assertTrue(logic._is_in_test_package('b.c.x', conf))
+    self.assertFalse(logic._is_in_test_package('c', conf))
+    self.assertFalse(logic._is_in_test_package('aaa', conf))
+    self.assertFalse(logic._is_in_test_package('', conf))
 
 
 class GetRequestedObjectTest(unittest.TestCase, utils.TestDataMixin):
@@ -288,343 +342,337 @@ class GetRequestedObjectTest(unittest.TestCase, utils.TestDataMixin):
 
   def setUp(self):
     self.setup_test_data()
+    self.config = copy.copy(config.get_config())
+    self.config.test_package_names = [self.test_package_name]
 
   def tearDown(self):
     self.tear_down_test_data()
 
   def test_invalid_input(self):
-    self.assertRaises(TypeError, logic.get_requested_object, None)
+    self.assertRaises(TypeError, logic.get_requested_object, None, self.config)
 
-  def test_empty_name(self):
-    self.assertEqual(None, logic.get_requested_object(''))
+  def test_root(self):
+    obj = logic.get_requested_object('', self.config)
+    self.assertTrue(isinstance(obj, logic.Root))
 
   def test_invalid_name(self):
-    self.assertEqual(None,
-                     logic.get_requested_object('a.non.existing.fullname'))
-    self.assertEqual(None, logic.get_requested_object('no_elements_fullname'))
+    fullname = self.test_package_name + '.a.non.existing.fullname'
+    obj = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(obj, logic.BadTest))
+    self.assertFalse(obj.exists)
+    self.assertEqual(1, len(obj.load_errors))
+    fullname = self.test_package_name + '.no_elements_fullname'
+    obj = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(obj, logic.BadTest))
+    self.assertFalse(obj.exists)
+    self.assertEqual(1, len(obj.load_errors))
+
+  def test_outside_test_package(self):
+    self.config.test_package_names = [self.test_package_name + '.subpackage']
+    fullname = self.test_package_name + '.test_goodmodule'
+    obj = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(obj, logic.BadTest))
+    self.assertFalse(obj.exists)
+    self.assertEqual(1, len(obj.load_errors))
 
   def test_package(self):
-    result = logic.get_requested_object(self.test_package_name)
-    self.assertNotEqual(None, result)
-    self.assertTrue(isinstance(result, types.ModuleType))
-    self.assertEqual(self.test_package_name, result.__name__)
+    result = logic.get_requested_object(self.test_package_name, self.config)
+    self.assertTrue(isinstance(result, logic.Package))
+    self.assertEqual(self.test_package_name, result.fullname)
 
   def test_module(self):
     fullname = self.test_package_name + '.test_goodmodule'
-    result = logic.get_requested_object(fullname)
-    self.assertNotEqual(None, result)
-    self.assertTrue(isinstance(result, types.ModuleType))
-    self.assertEqual(fullname, result.__name__)
+    result = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(result, logic.Module))
+    self.assertEqual(fullname, result.fullname)
+    self.assertEqual(fullname, result.module.__name__)
 
   def test_class(self):
     fullname = self.test_package_name + '.test_goodmodule.Foo'
-    result = logic.get_requested_object(fullname)
-    self.assertNotEqual(None, result)
-    self.assertTrue(isinstance(result, type))
-    self.assertEqual(fullname, result.__module__ + '.' + result.__name__)
+    result = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(result, logic.Class))
+    self.assertEqual(fullname, result.fullname)
+    cls_name = '%s.%s' % (result.class_.__module__, result.class_.__name__)
+    self.assertEqual(fullname, cls_name)
 
   def test_method(self):
     fullname = self.test_package_name + '.test_goodmodule.Foo.bar'
-    result = logic.get_requested_object(fullname)
-    self.assertNotEqual(None, result)
-    self.assertTrue(isinstance(result, types.MethodType))
-    result_name = result.__module__ + '.' + result.im_class.__name__
-    result_name += '.' + result.__name__
-    self.assertEqual(fullname, result_name)
-
-
-class ExtractTestcasesAndTestMethodNamesTest(unittest.TestCase):
-  """Tests for the extract_test_cases_and_method_names function."""
-
-  def test_invalid_input(self):
-    self.assertRaises(TypeError, logic.extract_test_cases_and_method_names,
-                      None)
-
-  def test_empty_module(self):
-    module = types.ModuleType('foo')
-    self.assertEqual({}, logic.extract_test_cases_and_method_names(module))
-
-  def test_complex_module(self):
-    # use this very module
-    module = inspect.getmodule(self)
-    result = logic.extract_test_cases_and_method_names(module)
-    self.assertNotEqual({}, result)
-    members = inspect.getmembers(module)
-    for _, value in members:
-      if isinstance(value, type) and issubclass(value, unittest.TestCase):
-        class_name = value.__name__
-        # each unittest defined in this module should be found
-        self.assertTrue(class_name in result.keys())
-        # each unittest should define at least one test method
-        self.assertNotEqual(0, len(result[class_name]))
-        # this particular method should be found as well
-        if class_name == type(self).__name__:
-          this_function = inspect.getframeinfo(inspect.currentframe())[2]
-          self.assertTrue(this_function in result[class_name])
-
-
-class CreateModuleDataTest(unittest.TestCase):
-  """Tests for the create_module_data function."""
-
-  def test_empty_modules_and_errors(self):
-    self.assertEqual([], logic.create_module_data([], []))
-
-  def test_invalid_input(self):
-    self.assertRaises(TypeError, logic.create_module_data, None, None)
-    self.assertRaises(TypeError, logic.create_module_data, None, [])
-    self.assertRaises(TypeError, logic.create_module_data, [], None)
-
-  def test_empty_module(self):
-    module = types.ModuleType('foo')
-    modules = [module]
-    errors = []
-    result = logic.create_module_data(modules, errors)
-    self.assertEqual(1, len(result))
-    moduledata = result[0]
-    self.assertEqual(module.__name__, moduledata.fullname)
-    self.assertEqual({}, moduledata.tests)
-    self.assertEqual(False, moduledata.load_error)
-    self.assertEqual(None, moduledata.load_traceback)
-
-  def test_module_with_test_case(self):
-    module = types.ModuleType('foo')
-    class_ = type(self)
-    class_name = class_.__name__
-    setattr(module, class_name, class_)
-    modules = [module]
-    errors = []
-    result = logic.create_module_data(modules, errors)
-    self.assertEqual(1, len(result))
-    moduledata = result[0]
-    self.assertEqual(module.__name__, moduledata.fullname)
-    testmethod_names = []
-    for  attr in dir(class_):
-      if attr.startswith('test'):
-        testmethod_names.append(attr)
-    self.assertEqual(1, len(moduledata.tests))
-    extracted_testmethods = moduledata.tests.values()[0]
-    self.assertEqual(testmethod_names, extracted_testmethods)
-    self.assertEqual(False, moduledata.load_error)
-    self.assertEqual(None, moduledata.load_traceback)
-
-  def test_no_module_two_errors(self):
-    modules = []
-    error1 = ('package.subpackage.module_foo', 'some string')
-    error2 = ('package.subpackage.module_bar', 'some other string')
-    errors = [error1, error2]
-    result = logic.create_module_data(modules, errors)
-    self.assertEqual(2, len(result))
-    for index in range(len(result)):
-      self.assertEqual(errors[index][0], result[index].fullname)
-      self.assertEqual({}, result[index].tests)
-      self.assertEqual(True, result[index].load_error)
-      self.assertEqual(errors[index][1], result[index].load_traceback)
-
-
-class RunTestAndCaptureOutputTest(unittest.TestCase):
-  """Tests for _run_test_and_capture_output."""
-
-  def setUp(self):
-    self.orig_stdout = logic.sys.stdout
-    self.orig_stderr = logic.sys.stderr
-
-  def tearDown(self):
-    logic.sys.stdout = self.orig_stdout
-    logic.sys.stderr = self.orig_stderr
-
-  def test_invalid_input(self):
-    for invalid in [None, 0, []]:
-      self.assertRaises(TypeError, logic.create_module_data, invalid)
-
-  def test_test_result(self):
-
-    class Test(unittest.TestCase):
-
-      def test_foo(self):
-        self.assertTrue(True)
-
-      def test_bar(self):
-        self.assertTrue(False)
-
-      def test_baz(self):
-        raise ValueError
-
-    suite = unittest.makeSuite(Test)
-    testresult, _ = logic._run_test_and_capture_output(suite)
-    self.assertEqual(3, testresult.testsRun)
-    self.assertEqual(1, len(testresult.failures))
-    self.assertEqual(1, len(testresult.errors))
-
-  def test_restored_redirects(self):
-
-    class Test(unittest.TestCase):
-
-      def test_foo(self):
-        raise ValueError
-
-    suite = unittest.makeSuite(Test)
-    logic._run_test_and_capture_output(suite)
-    self.assertEqual(self.orig_stdout, logic.sys.stdout)
-    self.assertEqual(self.orig_stderr, logic.sys.stderr)
-
-  def test_stdout_redirect(self):
-    expected_output = 'hello world'
-
-    class Test(unittest.TestCase):
-
-      def test_foo(self):
-        print expected_output
-
-    suite = unittest.makeSuite(Test)
-    _, output = logic._run_test_and_capture_output(suite)
-    self.assertTrue(output.find(expected_output) > 0)
-
-  def test_stderr_redirect(self):
-    expected_output = 'hello world'
-
-    class Test(unittest.TestCase):
-
-      def test_foo(self):
-        print >> sys.stderr, expected_output
-
-    suite = unittest.makeSuite(Test)
-    _, output = logic._run_test_and_capture_output(suite)
-    self.assertTrue(output.find(expected_output) > 0)
-
-
-class RunTestTest(unittest.TestCase):
-  """Tests for the run_test function."""
-
-  def setUp(self):
-
-    class SimpleTestCase(unittest.TestCase):
-
-      def test_pass(self):
-        self.assertTrue(True)
-
-      def test_fail(self):
-        self.fail()
-
-    self.testcase = SimpleTestCase
-
-  def test_no_test_object(self):
-    self.assertRaises(TypeError, logic.run_test, None)
-    self.assertRaises(TypeError, logic.run_test, [])
-
-  def test_test_module_with_no_test_cases(self):
-    module = types.ModuleType('foo')
-    result = logic.run_test(module)
-    self.assertEqual(module.__name__, result.fullname)
-    self.assertEqual([], result.errors)
-    self.assertEqual([], result.failures)
-    self.assertEqual(0, result.testsRun)
-    self.assertEqual(True, result.passed)
-    self.assertTrue(len(result.output) > 1)
-
-  def test_test_module_with_one_test_case(self):
-    module = types.ModuleType('foo')
-    setattr(module, 'SimpleTestCase', self.testcase)
-    result = logic.run_test(module)
-    self.assertEqual(module.__name__, result.fullname)
-    self.assertEqual([], result.errors)
-    self.assertEqual(1, len(result.failures))
-    self.assertEqual(2, result.testsRun)
-    self.assertEqual(False, result.passed)
-    self.assertTrue(len(result.output) > 1)
-
-  def test_test_case(self):
-    result = logic.run_test(self.testcase)
-    fullname = self.__module__ + '.' + self.testcase.__name__
+    result = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(result, logic.Method))
     self.assertEqual(fullname, result.fullname)
-    self.assertEqual([], result.errors)
-    self.assertEqual(1, len(result.failures))
-    self.assertEqual(2, result.testsRun)
-    self.assertEqual(False, result.passed)
-    self.assertTrue(len(result.output) > 1)
+    method_name = '%s.%s.%s' % (result.class_.__module__,
+                                result.class_.__name__, result.method_name)
+    self.assertEqual(fullname, method_name)
 
-  def test_test_method_pass(self):
-    result = logic.run_test(self.testcase.test_pass)
-    fullname = self.__module__ + '.' + self.testcase.__name__ + '.'
-    fullname += self.testcase.test_pass.__name__
-    self.assertEqual(fullname, result.fullname)
-    self.assertEqual([], result.errors)
-    self.assertEqual([], result.failures)
-    self.assertEqual(1, result.testsRun)
-    self.assertEqual(True, result.passed)
-    self.assertTrue(len(result.output) > 1)
-
-  def test_test_method_fail(self):
-    result = logic.run_test(self.testcase.test_fail)
-    fullname = self.__module__ + '.' + self.testcase.__name__ + '.'
-    fullname += self.testcase.test_fail.__name__
-    self.assertEqual(fullname, result.fullname)
-    self.assertEqual([], result.errors)
-    self.assertEqual(1, len(result.failures))
-    self.assertEqual(1, result.testsRun)
-    self.assertEqual(False, result.passed)
-    self.assertTrue(len(result.output) > 1)
+  def test_broken_module(self):
+    fullname = self.test_package_name + '.test_brokenmodule'
+    result = logic.get_requested_object(fullname, self.config)
+    self.assertTrue(isinstance(result, logic.BadTest))
+    self.assertEqual(1, len(result.load_errors))
 
 
-class LoadAndRunTestsTest(unittest.TestCase, utils.TestDataMixin):
-  """Tests for the load_and_run_tests function."""
+class GetUnitsTest(unittest.TestCase, utils.TestDataMixin):
+  """Tests for TestObject.get_units."""
 
-  # pylint:disable-msg=C0103
   def setUp(self):
     self.setup_test_data()
-    self.module_name = self.test_package_name + '.test_one_testcase'
-    self.test_class_name = self.module_name + '.SimpleTestCase'
-    self.test_method_name = self.test_class_name + '.test_pass'
+    self.config = copy.copy(config.get_config())
+    self.config.test_package_names = [self.test_package_name]
+    self.config.test_module_pattern = '^test_[\w]+$'
+    self.module_fixture = self.test_package_name + '.test_module_fixture'
+    self.class_fixture = self.test_package_name + '.test_class_fixture'
+    self.badnames = self.test_package_name + '.test_badnames'
 
-  # pylint:disable-msg=C0103
   def tearDown(self):
     self.tear_down_test_data()
 
-  def test_invalid_input(self):
-    self.assertRaises(TypeError, logic.load_and_run_tests, None, '')
-    self.assertRaises(TypeError, logic.load_and_run_tests, [], '')
+  def check(self, fullname, exp_names, exp_errs=None):
+    """Checks that get_units returns what is expected.
 
-  def test_empty_name(self):
-    self.assertEqual([], logic.load_and_run_tests('', TEST_MODULE_PATTERN))
+    Args:
+      fullname: The name to get test units in.
+      exp_names: The expected test unit names, in any order.  The names are
+          relative to fullname.
+      exp_errs: The expected names of objects that failed to load, in any
+          order.
+    """
+    errors_out = []
+    units = (logic.get_requested_object(fullname, self.config)
+             .get_units(self.config, errors_out))
+    exp_fullnames = sorted([fullname + name for name in exp_names])
+    self.assertEqual(exp_fullnames, sorted([u.fullname for u in units]))
+    load_failed = [err[0] for err in errors_out]
+    self.assertEqual(sorted(exp_errs or []), sorted(load_failed))
 
-  # TODO(schuppe): remove or fix this method or fix behavior.
-  # def test_test_module_with_no_test_cases(self):
-  #   fullname = self.test_package_name + '.no_testcase_test'
-  #   results = logic.load_and_run_tests(fullname)
-  #   self.assertEqual([], results, results[0].output)
 
-  # acceptable name - pylint:disable-msg=C0103
-  def test_test_module_with_one_test_case(self):
-    fullname = self.module_name
-    results = logic.load_and_run_tests(fullname, TEST_MODULE_PATTERN)
-    self.assertEqual(1, len(results))
-    data = results[0]
-    self.assertEqual(fullname, data.fullname)
-    self.assertEqual([], data.errors)
-    self.assertEqual(1, len(data.failures))
-    self.assertEqual(2, data.testsRun)
-    self.assertTrue(data.output)
-    self.assertEqual(False, data.passed)
+  def test_invalid_object(self):
+    self.check('bad', [], ['bad'])
 
-  def test_test_case(self):
-    fullname = self.test_class_name
-    results = logic.load_and_run_tests(fullname, TEST_MODULE_PATTERN)
-    self.assertEqual(1, len(results))
-    data = results[0]
-    self.assertEqual(fullname, data.fullname)
-    self.assertEqual([], data.errors)
-    self.assertEqual(1, len(data.failures))
-    self.assertEqual(2, data.testsRun)
-    self.assertTrue(data.output)
-    self.assertEqual(False, data.passed)
+  def test_root(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    subpackage = self.test_package_name + '.subpackage'
+    self.config.test_package_names = [subpackage]
+    self.check('', [subpackage + '.test_ham.FooTest.test_fail',
+                    subpackage + '.test_ham.FooTest.test_pass'])
 
-  def test_test_method(self):
-    fullname = self.test_method_name
-    results = logic.load_and_run_tests(fullname, TEST_MODULE_PATTERN)
-    self.assertEqual(1, len(results))
-    data = results[0]
-    self.assertEqual(fullname, data.fullname)
-    self.assertEqual([], data.errors)
-    self.assertEqual([], data.failures)
-    self.assertEqual(1, data.testsRun)
-    self.assertTrue(data.output)
-    self.assertEqual(True, data.passed)
+  def test_package(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    subpackage = self.test_package_name + '.subpackage'
+    self.check(subpackage, ['.test_ham.FooTest.test_fail',
+                            '.test_ham.FooTest.test_pass'])
+
+  def test_module_with_fixture(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    self.check(self.module_fixture, [''])
+
+  def test_module_without_fixture(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    self.check(self.class_fixture,
+               ['.HasClassFixture', '.HasNoClassFixture.test_fail',
+                '.HasNoClassFixture.test_pass'])
+
+  def test_no_parallel_classes(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = False
+    self.check(self.class_fixture, [''])
+
+  def test_no_parallel_methods(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = False
+    self.check(self.class_fixture, ['.HasClassFixture',
+                                    '.HasNoClassFixture'])
+
+  def test_class_with_fixture(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    self.check(self.class_fixture + '.HasClassFixture', [''])
+
+  def test_class_without_fixture(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    self.check(self.class_fixture + '.HasNoClassFixture',
+               ['.test_fail', '.test_pass'])
+
+  def test_load_error(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    broken_module = self.test_package_name + '.test_brokenmodule'
+    self.check(broken_module, [], [broken_module])
+
+  def test_module_bad_name(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = False
+    # The module should be found despite its __name__ not matching
+    # test_module_pattern.
+    units = (logic.get_requested_object(self.test_package_name, self.config)
+             .get_units(self.config))
+    self.assertTrue(self.badnames in [unit.fullname for unit in units])
+
+  def test_class_bad_names(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.check(self.badnames,
+               ['.ClassWithDifferentMethodNames', '.ClassWithDifferentModule',
+                '.ClassWithDifferentName1', '.ClassWithDifferentName2'])
+
+  def test_method_bad_names(self):
+    self.config.parallelize_modules = True
+    self.config.parallelize_classes = True
+    self.config.parallelize_methods = True
+    class_name = self.badnames + '.ClassWithDifferentMethodNames'
+    self.check(class_name, ['.test_method1', '.test_method2'])
+
+
+def check_names_and_errors(self, fullname, exp_names, fullnames, exp_errs,
+                           errs):
+  exp_fullnames = [fullname + name for name in exp_names]
+  self.assertEqual(sorted(exp_fullnames), sorted(fullnames))
+  load_failed = [err[0] for err in errors_out]
+  self.assertEqual(sorted(exp_errs or []), sorted(load_failed))
+
+
+class GetMethodsTest(unittest.TestCase, utils.TestDataMixin):
+  """Tests for the TestObject.get_methods method."""
+
+  def setUp(self):
+    self.setup_test_data()
+    self.config = copy.copy(config.get_config())
+    self.config.test_package_names = [self.test_package_name]
+    self.config.test_module_pattern = '^test_[\w]+$'
+    self.class_fixture = self.test_package_name + '.test_class_fixture'
+    self.class_with_fixture = self.class_fixture + '.HasClassFixture'
+    self.class_without_fixture = self.class_fixture + '.HasNoClassFixture'
+
+  def tearDown(self):
+    self.tear_down_test_data()
+
+  def check(self, fullname, exp_names, exp_errs=None):
+    """Checks that get_methods returns what is expected.
+
+    Args:
+      fullname: The name to get test methods in.
+      exp_names: The expected test method names, in any order.  The names are
+          relative to fullname.
+      exp_errs: The expected names of objects that failed to load, in any
+          order.
+    """
+    errors_out = []
+    methods = (logic.get_requested_object(fullname, self.config)
+               .get_methods(self.config, errors_out))
+    fullnames = [method.fullname for method in methods]
+    exp_fullnames = [fullname + name for name in exp_names]
+    self.assertEqual(sorted(exp_fullnames), sorted(fullnames))
+    load_failed = [err[0] for err in errors_out]
+    self.assertEqual(sorted(exp_errs or []), sorted(load_failed))
+
+  def test_invalid_name(self):
+    self.check('bad', [], ['bad'])
+
+  def test_root(self):
+    subpackage = self.test_package_name + '.subpackage'
+    self.config.test_package_names = [subpackage]
+    prefix = subpackage + '.test_ham.FooTest'
+    self.check('', [prefix + '.test_pass', prefix + '.test_fail'])
+
+  def test_root_module(self):
+    module = self.test_package_name + '.test_one_testcase'
+    self.config.test_package_names = [module]
+    self.check('', [module + '.SimpleTestCase.test_pass',
+                    module + '.SimpleTestCase.test_fail'])
+
+  def test_root_bad_module(self):
+    module = self.test_package_name + '.test_badmodule'
+    self.config.test_package_names = [module]
+    self.check('', [], [module])
+
+  def test_package(self):
+    subpackage = self.test_package_name + '.subpackage'
+    self.check(subpackage, ['.test_ham.FooTest.test_pass',
+                            '.test_ham.FooTest.test_fail'])
+
+  def test_module(self):
+    self.check(self.class_fixture,
+               ['.HasClassFixture.test_has_class_value',
+                '.HasClassFixture.test_has_bad_class_value',
+                '.HasNoClassFixture.test_pass',
+                '.HasNoClassFixture.test_fail'])
+
+  def test_class(self):
+    self.check(self.class_with_fixture,
+               ['.test_has_class_value', '.test_has_bad_class_value'])
+
+  def test_method(self):
+    method = self.class_with_fixture + '.test_has_class_value'
+    self.check(method, [''])
+
+  def test_bad_names(self):
+    badnames = self.test_package_name + '.test_badnames'
+    self.check(badnames, ['.ClassWithDifferentModule.test_method',
+                          '.ClassWithDifferentName1.test_method',
+                          '.ClassWithDifferentName2.test_method',
+                          '.ClassWithDifferentMethodNames.test_method1',
+                          '.ClassWithDifferentMethodNames.test_method2'])
+
+
+class GetTestSuiteTest(unittest.TestCase, utils.TestDataMixin):
+  """Tests for TestObject.get_test_suite."""
+
+  def setUp(self):
+    self.setup_test_data()
+    self.config = copy.copy(config.get_config())
+    self.config.test_package_names = [self.test_package_name]
+    self.config.test_module_pattern = '^test_[\w]+$'
+    self.class_fixture = self.test_package_name + '.test_class_fixture'
+    self.class_with_fixture = self.class_fixture + '.HasClassFixture'
+    self.class_without_fixture = self.class_fixture + '.HasNoClassFixture'
+
+  def tearDown(self):
+    self.tear_down_test_data()
+
+  def check(self, fullname, exp_names, exp_errs=None):
+    """Checks that get_suite returns what is expected.
+
+    Args:
+      fullname: The name to get a test suite from.
+      exp_names: The expected test method names, in any order.  The names are
+          relative to fullname.
+      exp_errs: The expected names of objects that failed to load, in any
+          order.
+    """
+    errors_out = []
+    suite = (logic.get_requested_object(fullname, self.config)
+             .get_suite(self.config, errors_out))
+    self.assertTrue(isinstance(suite, unittest.TestSuite))
+    fullnames = [test.fullname for test in suite]
+    exp_fullnames = [fullname + name for name in exp_names]
+    self.assertEqual(sorted(exp_fullnames), sorted(fullnames))
+    load_failed = [err[0] for err in errors_out]
+    self.assertEqual(sorted(exp_errs or []), sorted(load_failed))
+
+  def test_invalid_name(self):
+    self.check('bad', [], ['bad'])
+
+  def test_package(self):
+    subpackage = self.test_package_name + '.subpackage'
+    self.check(subpackage, ['.test_ham.FooTest.test_pass',
+                            '.test_ham.FooTest.test_fail'])
+
+  def test_bad_names(self):
+    badnames = self.test_package_name + '.test_badnames'
+    self.check(badnames, ['.ClassWithDifferentModule.test_method',
+                          '.ClassWithDifferentName1.test_method',
+                          '.ClassWithDifferentName2.test_method',
+                          '.ClassWithDifferentMethodNames.test_method1',
+                          '.ClassWithDifferentMethodNames.test_method2'])

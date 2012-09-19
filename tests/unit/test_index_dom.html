@@ -1,0 +1,18 @@
+<body>
+  <input id="show-unstarted" type="checkbox" checked="checked"/>
+  <input id="show-running" type="checkbox" checked="checked"/>
+  <input id="show-error" type="checkbox" checked="checked"/>
+  <input id="show-fail" type="checkbox" checked="checked"/>
+  <input id="show-pass" type="checkbox" checked="checked"/>
+
+  <div id="left" class="larger-panel">
+    <div id="root"></div>
+    <p id="loading">Loading tests...</p>
+  </div>
+
+  <div id="right" class="smaller-panel">
+    <div id="displayed-test-name"></div>
+    <button id="run-again" style="display: none;"/>
+    <pre id="output">No test selected.</pre>
+  </div>
+</body>

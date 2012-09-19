@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,115 +14,136 @@
 
 """REST interface to the App Engine test extension (aeta).
 
-The REST interface will respond to request regarding test objects.  A
-test object can be a package, a module, a class, or a test method. The
-name pattern used is similar to the standard Python pattern which
-describes a hierarchy such as package.subpackage.module.class.method.
+The REST interface will respond to request regarding test objects.  A test
+object can be a package, a module, a class, or a test method. The name pattern
+used is similar to the standard Python pattern which describes a hierarchy such
+as package.subpackage.module.class.method.  The name can also be an empty
+string to indicate that all tests should be run.
 
 The interface has the following top level paths:
-- modules/<fullname>
-- results/<fullname>
-- objecttype/<fullname>
+- start_batch/<fullname>
+- batch_info/<batch id>
+- batch_results/<batch id>?start=<integer>
 
-For all requests, a full object name (according to the pattern
-described above) is expected to follow the top level path. All
-requests will respond with a JSON object or an HTTP error, e.g. if a
-particular object could not be found.
-
-
-Module Information
-------------------
-
-Requests to an URL with the 'modules' prefix will return test
-information on the requested module or package. The format of a
-response is
-
-{ module_data: an array of module data (defined below),
-  subpackages: an array of subpackage names
-}
-
-module data has the following structure:
-
-{'fullname': full name of a package of module,
- 'tests': a dictionary with test classes as key values, and a list of
-          test method names,
- 'load_error': false if the object could be loaded, true if an error
-               occured,
- 'load_traceback': the traceback of the load error or null ,
-}
+For the start_batch request, a full object name (according to the pattern
+described above) is expected to follow the top level path.  Other requests
+expect a batch id which is returned by start_batch.  All requests will respond
+with a JSON object or an HTTP error, e.g. if a particular object could not be
+found.
 
 
-Test results
-------------
-
-Requests to an URL with the 'results' prefix will return a list of
-test result information for all tests defined in and below the
-particular test object. The highest abstraction level for returned
-test result information is module, the lowest is method. For example,
-if the object is a package, all tests defined in this package and
-subpackages will be grouped by the module they belong to and
-returned. If the object is a class, only one test result is returned,
-describing the outcome of running all tests of this particular
-class.
-
-This can be useful if tests you have to run will hit the timeout
-imposed by App Engine. If running a particular test case would take 1
-minute, but the limit is at 30 seconds, you can thus run each test
-method individually and bypass this limitation.
-
-The format of results is:
-
-[{'fullname': full name of the test object,
-  'errors': An array of [test suite name, error traceback] arrays of
-            all test cases which caused an error,
-  'failures': An array of [test name suite, error traceback] arrays of
-              all test cases which failed,
-  'passed': The number of passed tests,
-  'testsRun': the total number of tests run,
-  'output': cgi-escaped output of the entire test run,
- }]
-
-
-Testobject Type
+Get methods
 ---------------
 
-Finally, requests to an URL with the "objecttype" prefix return the
-type of the test object the given fullname represents. Possible types
-(and therefore return values) are "package", "module", "class", and
-"method". If the given fullname does not represent any of those, an
-empty string is returned.
+Usage:
+  POST /tests/rest/get_methods/some.test
+
+This will get a list of test methods contained in some test object.  If no test
+name is given, it will return all test methods.  The response will be JSON in
+the following format:
+{'method_names': A list of test method full names.
+ 'load_errors': A list of errors that were encountered while trying to get the
+                test units contained in the batch.  Each error is of the form
+                [object fullname, exception string].
+}
+
+
+Start batch
+---------------
+
+Usage:
+  POST /tests/rest/start_batch/some.test
+
+This will start running the test batch in the background.  The test batch
+will run all tests named by the part of the URL after start_batch/.  If no
+test name is given, it will run all tests named in the application's
+test_package_names configuration.
+
+The response will be the numeric ID of the test batch.
+
+
+Batch info
+---------------
+
+Usage:
+  GET /tests/rest/batch_info/2451515
+
+This will get data regarding the batch identified by the given number.  The
+response will be JSON in the following format:
+
+{'num_units': The number of testing units in the batch, or null if this number
+              is not currently known.
+ 'test_unit_methods': A dictionary mapping test unit fullname to a list of test
+                      method full names contained in that test unit.  All test
+                      units that are part of the batch will be returned.  If
+                      these are not yet known, then test_unit_methods will be
+                      null.  This gives the local client enough information to
+                      create the local test suites.
+ 'load_errors': A list of errors that were encountered while trying to get the
+                test units contained in the batch.  Each error is of the form
+                [object fullname, exception string].
+}
+
+
+Batch results
+---------------
+
+Usage:
+  GET /tests/rest/batch_results/364?start=5
+
+This retrieves and returns a list of test results for test units that have
+completed.  Which results are returned depends on both which tests have
+completed and the start argument.  'start' should be an index into the list of
+test units.  The results returned consist of the results of units starting at
+this index and extending up to the final completed result in this stretch.  For
+example, if tests 0, 1, 2, 3, and 5 have completed, and the start argument is
+1, then results 1, 2, and 3 will be returned.  This protocol makes it easy for
+the caller to make repeated calls to gradually get all test results in order.
+
+The response will be JSON in the following format:
+
+[{'fullname': full name of the test unit,
+  'load_errors': An array of [object name, error traceback] arrays of any load
+                 errors encountered while loading the tests in this unit.
+  'errors': An array of [test method name, error traceback] arrays of all test
+            methods that caused an error,
+  'failures': An array of [test method name, error traceback] arrays of all
+              test methods which failed,
+  'output': Output of the entire test run,
+ }]
 """
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
-import cgi
-import cStringIO
-import glob
-import inspect
-import logging
-import os
-import sys
 
-import simplejson as json
 
+
+from google.appengine.ext import ndb
+try:
+  # Location when on the app server
+  from google.appengine.runtime import DeadlineExceededError
+except ImportError:
+  # Location when on the development server
+  from google.appengine.runtime.apiproxy_errors import DeadlineExceededError
+
+try:
+  import json
+except ImportError:
+  import simplejson as json
+
+from aeta import utils
 from aeta import config
-from aeta import handlers
 from aeta import logic
+from aeta import handlers
 from aeta import models
+from aeta import runner
+
+
+_MEMCACHE_FAILURE_MESSAGE = ('Try again later, or consider setting "storage" '
+                             'in aeta.yaml to "datastore" instead.')
 
 
 class Error(Exception):
   """Base rest error type."""
-
-
-class ObjectNotFoundError(Exception):
-  """Raised when a particular test object could not be found."""
-  pass
-
-
-class LoadError(Error):
-  """Raised when a module could not be loaded."""
-  pass
 
 
 class IncorrectUsageError(Error):
@@ -130,247 +151,39 @@ class IncorrectUsageError(Error):
   pass
 
 
-def convert_module_data(module_data):
-  """Convert module data to JSON format.
+class MemcacheFailureError(Error):
+  """Raised when data is unavailable due to memcache failure."""
+
+
+def get_batch_results(batch, start):
+  """Gets new test results from a batch.
 
   Args:
-    module_data: A models.ModuleData object.
+    batch: The models.TestBatch instance whose tests to get.
+    start: The lowest index of the test result to return.
 
   Returns:
-    A jsonized representation of the passed module data object.
-  """
-  logic.check_type(module_data, 'module_data', models.ModuleData)
-  data = {'fullname': module_data.fullname,
-          'load_error': module_data.load_error,
-          'load_traceback': module_data.load_traceback,
-          'tests': module_data.tests,
-         }
-  return json.dumps(data)
-
-
-def convert_test_result_data(result_data):
-  """Convert test result data to JSON format.
-
-  Args:
-    result_data: A models.TestResultData object.
-
-  Returns:
-    A jsonized representation of the passed testresults object.
-  """
-  logic.check_type(result_data, 'result_data', models.TestResultData)
-  errors = [(str(error), info) for (error, info) in result_data.errors]
-  failures = [(str(failure), info) for (failure, info) in result_data.failures]
-  data = {'errors': errors,
-          'failures': failures,
-          'fullname': result_data.fullname,
-          'output': cgi.escape(result_data.output),
-          'passed': result_data.passed,
-          'testsRun': result_data.testsRun,
-         }
-  return json.dumps(data)
-
-
-def get_subpackages(fullname):
-  """Get all subpackages of fullname.
-
-  Only children are returned, no grandchildren or below.
-
-  If fullname does not identify a valid package, an empty list is
-  returned.
-
-  Args:
-    fullname: Name of the parent package.
-
-  Returns:
-    A list of subpackages of the specified package.
-  """
-  logic.check_type(fullname, 'fullname', str)
-  packages = []
-  path = logic.get_abs_path_from_package_name(fullname)
-  if not path:
-    return []
-  for directory in glob.glob(os.path.join(path, '*')):
-    if os.path.isdir(directory):
-      if (os.path.isfile(os.path.join(directory, '__init__.py')) or
-          os.path.isfile(os.path.join(directory, '__init__.pyc'))):
-        packages.append(os.path.basename(directory))
-  return packages
-
-
-def jsonize_module_information(module_data, subpackages=None):
-  """Create JSON data for package/module information.
-
-  Modules and packages are treated equally with the difference, that
-  packages have subpackages whereas modules do not.
-
-  Args:u
-    module_data: A list of models.ModuleData objects.
-    subpackages: A list of subpackages or None if no subpackages are available.
-
-  Returns:
-    A jsonized dictionary with both inputs as key value pairs.
-  """
-  logic.check_type(module_data, 'module_data', list)
-  if subpackages is None:
-    subpackages = []
-  logic.check_type(subpackages, 'subpackages', list)
-  jsonized_pckgs = json.dumps(subpackages)
-  converted_moddata = []
-  for data in module_data:
-    converted_moddata.append(convert_module_data(data))
-  jsonized_moddata = '[' + ','.join(converted_moddata) + ']'
-  return '{"subpackages": %s, "module_data": %s}' % (jsonized_pckgs,
-                                                     jsonized_moddata)
-
-
-def get_module_data(fullname, conf):
-  """Get module data for fullname.
-
-  Modules and packages are treated equally with the difference, that
-  packages have subpackages whereas modules do not.
-
-  Args:
-    fullname: Name of a module or package.
-    conf: A config.Config instance.
-
-  Returns:
-    A ([subpackages list], [moduledata list]) tuple.
+    A list of JSON-converted test result data for all consecutive completed
+        tests starting from start.
 
   Raises:
-    ObjectNotFoundError: If no corresponding object could be found.
-    LoadError: If a module could not be loaded.
-    IncorrectUsageError: If an test object which is not a module or package
-                         was requested.
+    MemcacheFailureError: If test results are unavailable due to memcache
+        failure.
   """
-  logic.check_type(fullname, 'fullname', str)
-  subpackages = []
-  moduledata = []
-  modules = []
-  load_errors = []
-  if not fullname:
-    # If no test is specified, return all available top-level test
-    # objects.
-    for name in conf.test_package_names:
-      if logic.get_abs_path_from_package_name(name):
-        subpackages.append(name)
-      elif logic.is_module(name):
-        modules.extend(logic.load_modules(
-            name,
-            load_errors,
-            module_pattern=conf.test_module_pattern,
-            depth=1))
-    moduledata = logic.create_module_data(modules, load_errors)
-    return  (subpackages, moduledata)
-  obj = logic.get_requested_object(fullname)
-  # We cannot return module data for classes or methods.
-  if inspect.isclass(obj):
-    raise IncorrectUsageError('No module information for a class '
-                              'can be provided.')
-  if inspect.ismethod(obj):
-    raise IncorrectUsageError('No module information for a method '
-                              'can be provided.')
-  elif logic.get_abs_path_from_package_name(fullname):
-    subpackages = get_subpackages(fullname)
-    modules.extend(logic.load_modules(fullname, load_errors,
-                                      module_pattern=conf.test_module_pattern,
-                                      depth=1))
-  elif inspect.ismodule(obj):
-    modules.append(logic.load_module_from_module_name(fullname, load_errors))
-  elif obj is None:
-    # TODO(schuppe): This approach is not able to distinguish
-    # ImportErrors which occur because the module has incorrect
-    # imports or the module itself does not exist. Both case raise an
-    # ImportError, although the latter should map to 'no such test
-    # object found.'
-    moduledata = logic.load_module_from_module_name(fullname, load_errors)
-    if not load_errors:
-      raise ObjectNotFoundError('No test object "%s" found.' % fullname)
-    else:
-      stacktrace = load_errors[0][1]
-      raise LoadError('Could not load module "%s": %s' % (fullname,
-                                                          stacktrace))
-  moduledata = logic.create_module_data(modules, load_errors)
-  return (subpackages, moduledata)
-
-
-# acceptable number of branches - pylint:disable-msg=R0912
-def get_test_result_data(fullname, conf):
-  """Get all test results for fullname.
-
-  Args:
-    fullname: Name of a test object such as a package or a test case.
-    conf: A config.Config instance.
-
-  Returns:
-    A list of models.TestResultData objects.
-
-  Raises:
-    ObjectNotFoundError: If no corresponding object could be found.
-  """
-  logic.check_type(fullname, 'fullname', str)
-  modules = []
+  utils.check_type(batch, 'batch', models.TestBatch)
+  utils.check_type(start, 'start', int)
+  tasks = ndb.get_multi([models.RunTestUnitTask.get_key(batch.key, i)
+                         for i in range(start, batch.num_units)])
   results = []
-  if not fullname:
-    for testname in conf.test_package_names:
-      modules.extend(logic.load_modules(
-          testname,
-          [],
-          module_pattern=conf.test_module_pattern))
-    for module in modules:
-      results.append(logic.run_test(module))
-  elif logic.get_abs_path_from_package_name(fullname):
-    modules = logic.load_modules(
-        fullname,
-        [],
-        module_pattern=conf.test_module_pattern)
-    for module in modules:
-      results.append(logic.run_test(module))
-  if results:
-    return results
-  obj = logic.get_requested_object(fullname)
-  if obj is None:
-    raise ObjectNotFoundError('There is no such object: "%s"' % fullname)
-  elif inspect.ismodule(obj):
-    modules = [obj]
-    for module in modules:
-      result = logic.run_test(module)
-      results.append(result)
-  elif inspect.isclass(obj):
-    result = logic.run_test(obj)
-    if result:
-      results.append(result)
-  elif inspect.ismethod(obj):
-    result = logic.run_test(obj)
-    if result:
+  if batch.num_units is not None:
+    for task in tasks:
+      if not task:
+        raise MemcacheFailureError()
+      result = task.get_json()
+      if not result:
+        break
       results.append(result)
   return results
-
-
-def get_object_type(fullname):
-  """Get a string indicating the type of the test object.
-
-  Valid object types are 'package', 'module', 'class', and
-  'method'. If fullname cannot be mapped to a valid test object of one
-  of these for kinds, an empty string is returned.
-
-  Args:
-    fullname: Name of a test object such as a package or a test casex.
-
-  Returns:
-    A string indicating the type of the object.
-  """
-  if not fullname:
-    return ''
-  if logic.get_abs_path_from_package_name(fullname):
-    return 'package'
-  obj = logic.get_requested_object(fullname)
-  if inspect.ismodule(obj):
-    return 'module'
-  if inspect.isclass(obj):
-    return 'class'
-  if inspect.ismethod(obj):
-    return 'method'
-  return ''
 
 
 class BaseRESTRequestHandler(handlers.BaseRequestHandler):
@@ -386,85 +199,101 @@ class BaseRESTRequestHandler(handlers.BaseRequestHandler):
     self.response.out.write(msg)
     self.response.set_status(status)
 
+  def get_batch(self, batch_id):
+    batch = ndb.Key(models.TestBatch, batch_id).get()
+    if not batch:
+      msg = 'No batch with id %s found.' % batch_id
+      if config.get_config().storage == 'memcache':
+        msg += ('\nThis could be due to memcache failing.  ' +
+                _MEMCACHE_FAILURE_MESSAGE)
+      self.render_error(msg, 404)
+    return batch
 
-class ModuleInfoRequestHandler(BaseRESTRequestHandler):
-  """Request handler for module information requests."""
 
-  # conscious change in argument count - pylint:disable-msg=W0221
+class GetMethodsRequestHandler(BaseRESTRequestHandler):
+  """Request handler for getting test methods."""
+
   def get(self, fullname):
-    """Render jsonized package or module information.
+    conf = config.get_config()
+    load_errors = []
+    test = logic.get_requested_object(fullname, conf)
+    methods = test.get_methods(conf, load_errors)
+    data = {'method_names': [method.fullname for method in methods],
+            'load_errors': load_errors}
+    self.response.out.write(json.dumps(data))
 
-    Args:
-      fullname: Name of a package or module.
 
-    Returns:
-      A String containing jsonized package or module information.
-    """
+class StartBatchRequestHandler(BaseRESTRequestHandler):
+  """Request handler for starting a test batch."""
+
+  def post(self, fullname):
+    conf = config.get_config()
+    obj = logic.get_requested_object(fullname, conf)
+    if isinstance(obj, logic.BadTest):
+      if obj.exists:
+        self.render_error('Error loading test object %s: \n%s' %
+                          (fullname, obj.load_errors[0][1]), 500)
+      else:
+        self.render_error('Test object %s does not exist.' % fullname, 404)
+      return
     conf = config.get_config()
     try:
+      batch = runner.start_batch(fullname, conf)
+    except DeadlineExceededError:
+      self.render_error('Tests took too long to run.  Consider setting the '
+                        '"storage" option in aeta.yaml to something other '
+                        'than "immediate", such as "memcache".', 500)
+      return
+    if conf.storage == 'immediate':
+      tasks = batch.get_tasks(conf)
+      data = {'batch_info': batch.get_json(),
+              'results': [task.get_json() for task in tasks]
+             }
+    else:
+      data = {'batch_id': str(batch.key.id())}
+    self.response.out.write(json.dumps(data))
+
+
+class BatchInfoRequestHandler(BaseRESTRequestHandler):
+  """Request handler for getting general information about a test batch."""
+
+  def get(self, batch_id):
+    batch = self.get_batch(batch_id)
+    if batch:
+      self.response.out.write(json.dumps(batch.get_json()))
+
+
+class BatchResultsRequestHandler(BaseRESTRequestHandler):
+  """Request handler for polling for completed test results in a batch."""
+
+  def get(self, batch_id):
+    batch = self.get_batch(batch_id)
+    if batch:
       try:
-        old_stdout = sys.stdout
-        sys.stdout = cStringIO.StringIO()
-        (subpackages, moduledata) = get_module_data(fullname, conf)
-      finally:
-        stdout = sys.stdout.getvalue()
-        if stdout:
-          logging.info("stdout: %s", stdout)
-        sys.stdout = old_stdout
-    except IncorrectUsageError, err:
-      self.render_error(err.message, 404)
-      return
-    except ObjectNotFoundError, err:
-      self.render_error(err.message, 404)
-      return
-    except LoadError, err:
-      logging.error(err)
-      self.render_error(str(err), 500)
-      return
-    jsonized_info = jsonize_module_information(moduledata, subpackages)
-    self.response.out.write(jsonized_info)
-
-
-class TestResultRequestHandler(BaseRESTRequestHandler):
-  """Request handler for test result requests."""
-
-  # conscious change in argument count - pylint:disable-msg=W0221
-  def get(self, fullname):
-    """Render jsonized test results.
-
-    Args:
-      fullname: Name of a test object.
-
-    Returns:
-      A String containing jsonized test results.
-    """
-    conf = config.get_config()
-    try:
-      results = get_test_result_data(fullname, conf)
-    except ObjectNotFoundError, err:
-      self.render_error(str(err), 404)
-      logging.error(err)
-      return
-    converts = []
-    for result in results:
-      converts.append(convert_test_result_data(result))
-    self.response.out.write('[' + ','.join(converts) + ']')
-
-
-class ObjectTypeRequestHandler(BaseRESTRequestHandler):
-  """Request handler for object type requests."""
-
-  # conscious change in argument count - pylint:disable-msg=W0221
-  def get(self, fullname):
-    """Return object type of the requested name."""
-    self.response.out.write(get_object_type(fullname))
+        start = int(self.request.get('start'))
+      except ValueError:
+        self.render_error('Not an integer: %s' % self.request.get('start'),
+                          400)
+        return
+      if not 0 <= start < (batch.num_units or 1):
+        self.render_error('start must be at least 0 and under the number of '
+                          'test units (%s) but is %s' %
+                          (batch.num_units, start), 400)
+        return
+      try:
+        results = get_batch_results(batch, start)
+      except MemcacheFailureError:
+        self.render_error('Memcache failed when running tests.  ' +
+                          _MEMCACHE_FAILURE_MESSAGE)
+      self.response.out.write(json.dumps(results))
 
 
 def get_handler_mapping(urlprefix):
   """Get mapping of URL prefix to handler."""
-  logic.check_type(urlprefix, 'urlprefix', basestring)
-  mapping = (('%sobjecttype/(.*)' % urlprefix, ObjectTypeRequestHandler),
-             ('%sresults/(.*)' % urlprefix, TestResultRequestHandler),
-             ('%smodules/(.*)' % urlprefix, ModuleInfoRequestHandler)
-             )
+  utils.check_type(urlprefix, 'urlprefix', basestring)
+  mapping = (('%sget_methods/(.*)' % urlprefix, GetMethodsRequestHandler),
+             ('%sstart_batch/(.*)' % urlprefix, StartBatchRequestHandler),
+             ('%sbatch_info/(.*)' % urlprefix, BatchInfoRequestHandler),
+             ('%sbatch_results/(.*)' % urlprefix, BatchResultsRequestHandler),
+            )
   return mapping
