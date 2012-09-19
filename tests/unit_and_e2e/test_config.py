@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Tests for the models module of aeta."""
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
+
 
 # Disable checking; pylint: disable-msg=C0111,W0212,R0904,C0103
 # - docstrings
@@ -30,6 +30,7 @@ from aeta import config
 SET_CONFIG_OPTIONS = {'test_package_names': 'tests1, tests2',
                       'test_module_pattern': '^[\w]+_test$',
                       'url_path': '/tests/',
+                      'use_appstats': False,
                       }
 
 class ConfigTest(unittest.TestCase):
@@ -55,16 +56,16 @@ class ConfigTest(unittest.TestCase):
   def test_get_path_property(self):
     # We test this using an example option.
     url_path = '/a-test-path/'
-    name = 'automatic'
+    name = 'rest'
     expected_suffix = config.Config.COMPUTED_PATH_OPTIONS[name]
     expected_value = '/a-test-path/%s/' % expected_suffix
     conf = config.Config()
     conf.url_path = url_path
     self.assertEqual(expected_value, conf._get_path_property(name))
     # Check computed and cached value.
-    self.assertEqual(expected_value, conf._automatic)
+    self.assertEqual(expected_value, conf._rest)
     # Check cached value is used if available.
-    conf._automatic = 'cached_value'
+    conf._rest = 'cached_value'
     self.assertEqual('cached_value', conf._get_path_property(name))
 
   def check_property(self, property_name):
@@ -75,14 +76,14 @@ class ConfigTest(unittest.TestCase):
     conf.url_path = url_path
     self.assertEqual(expected_value, conf._get_path_property(property_name))
 
-  def test_get_path_automatic(self):
-    self.check_property('automatic')
-
-  def test_get_path_importcheck(self):
-    self.check_property('importcheck')
-
   def test_get_path_rest(self):
     self.check_property('rest')
+
+  def test_get_path_deferred(self):
+    self.check_property('deferred')
+
+  def test_get_path_static(self):
+    self.check_property('static')
 
 
 class ParseOptionTest(unittest.TestCase):
@@ -90,19 +91,24 @@ class ParseOptionTest(unittest.TestCase):
 
   def test_test_package_name(self):
     self.assertEqual([], config._parse_option('test_package_names', ''))
-    self.assertEqual(['a'], config._parse_option('test_package_names',
-                                                     'a'))
-    self.assertEqual(['a'], config._parse_option('test_package_names',
-                                                     'a,'))
+    self.assertEqual(['a'], config._parse_option('test_package_names', 'a'))
+    self.assertEqual(['a'], config._parse_option('test_package_names', 'a, '))
     self.assertEqual(['a', 'b'], config._parse_option('test_package_names',
-                                                     'a, b'))
+                                                      'a, b'))
     self.assertEqual(['a', 'b'], config._parse_option('test_package_names',
-                                                     'a,b'))
+                                                      'a,b'))
     self.assertEqual(['a', 'b'], config._parse_option('test_package_names',
-                                                     'a,b,'))
+                                                      'a,b, '))
+    self.assertEqual(['a', 'b'], config._parse_option('test_package_names',
+                                                      'a,b,'))
+
+  def test_permitted_emails(self):
+    self.assertEqual(['a', 'b'], config._parse_option('permitted_emails',
+                                                      'a,b,'))
 
   def test_others(self):
     self.assertEqual('a,b,', config._parse_option('foo', 'a,b,'))
+
 
 class LoadConfigTest(unittest.TestCase):
   """Tests for _load_config()."""
@@ -113,9 +119,20 @@ class LoadConfigTest(unittest.TestCase):
     self.orig_get_user_config_path = config._get_user_config_path
     # By default, checked files do exist.
     config.os.path.exists = lambda _: True
-    self.default_config = {'test_package_names': 'tests',
-                           'test_module_pattern': '^[\w]+_test$',
-                           'url_path': '/tests/'}
+    self.default_config = {
+        'test_package_names': 'tests',
+        'test_module_pattern': '^test_[\w]+$',
+        'url_path': '/tests/',
+        'use_appstats': False,
+        'url_path': '/tests/',
+        'parallelize_modules': True,
+        'parallelize_classes': False,
+        'parallelize_methods': False,
+        'test_queue': 'default',
+        'storage': 'datastore',
+        'protected': True,
+        'permitted_emails': '',
+        'include_test_functions': True}
     # Flag used to track if the mock _load_yaml function has been called.
     self._mock_load_yaml_called = False
 
@@ -151,6 +168,7 @@ class LoadConfigTest(unittest.TestCase):
     conf = config._load_config()
     expected_values = dict(self.default_config)
     expected_values['test_package_names'] = ['tests']
+    expected_values['permitted_emails'] = []
     for key, value in expected_values.items():
       self.assertEqual(value, getattr(conf, key))
 

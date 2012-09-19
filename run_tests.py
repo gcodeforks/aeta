@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 
 """Script to run tests."""
 
-__author__ = 'schuppe@google.com (Robert Schuppenies)'
+
 
 import optparse
 import os

@@ -2,7 +2,56 @@
 test_package_names: tests
 
 # Regular expression of modules which to include in tests.
-test_module_pattern: ^test_[\w]+$
+# MOE:begin_strip
+test_module_pattern: ^[\w]+_test$
+# MOE:end_strip_and_replace test_module_pattern: ^test_[\w]+$
 
 # URL path to the web interface of aeta.
 url_path: /tests/
+
+# Whether to use appstats to record aeta test performance.  If this is True,
+# stats are avalilable at <aeta url path>/stats/details.  Should be turned
+# off if appstats is on for the application as a whole.
+use_appstats: false
+
+# Run multiple modules in parallel?  This is true by default because each
+# module might take a long time to run, so it is possible to save time by
+# parallelizing them.
+parallelize_modules: true
+
+# Run multiple classes in parallel?  This is false by default because running a
+# single class is usually fast, so it is better to avoid task queue overhead.
+parallelize_classes: false
+
+# Run multiple methods in parallel?  This is false by default because running a
+# single method is usually fast, so it is better to avoid task queue overhead.
+parallelize_methods: false
+
+# Which queue to use to run tests.  To improve performance, developers should
+# switch this to another queue and set the queue's rate to be higher.
+test_queue: default
+
+# What method to use to store test results.  Available options:
+# datastore: Store results in the datastore.
+# memcache: Store results in memcache.  May cause errors due to unreliability.
+# immediate: Run tests in the request handler.  Fast for short tests, but does
+#     not allow parallelism and could time out.
+storage: datastore
+
+# Whether aeta should require authorization to run tests.  Recommended for
+# publically accessible applications.
+# MOE:begin_strip
+protected: false
+# MOE:end_strip_and_replace protected: true
+
+# Comma-separated list of email addresses of users who can run tests.  No need
+# to add admin users.
+permitted_emails:
+
+# Whether to include test functions (functions in the module that start with
+# "test") as part of the test module.  If they are included, they will be
+# included in an extra class whose name is based on the module's name.  For
+# example, if the test_unicode module contains a function test_text(), then
+# this test can be accessed as
+# test_unicode.TestUnicodeWrappedTestFunctions.test_text.
+include_test_functions: true
