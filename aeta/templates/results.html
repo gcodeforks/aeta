@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block body %}
+
+  <h1>{{ title }}</h1>
+
+  {% ifnotequal len_testresults  1 %}
+    <h2>Overview</h2>
+
+      <ul class="aet-testresults">
+      {% for testresult in testresults %}
+        <li class="aet-row {% if testresult.passed %}aet-success{% else %}aet-error{% endif %}">
+          </span>
+          <a href="#{{ testresult.fullname }}">{{ testresult.fullname }}</a>
+        </li>
+      {% endfor %}
+      </ul>
+
+  {% endifnotequal %}
+
+  <h2>Test Details</h2>
+
+  {% for testresult in testresults %}
+      <a name="{{ testresult.fullname }}"></a>
+      <h2>{{ testresult.fullname }}</h2>
+        Links:
+        {% ifnotequal len_testresults 1 %}
+          <a href="{{ path_to_automatic }}{{ testresult.fullname }}">Run only this test</a>
+          &nbsp;|&nbsp;
+         {% endifnotequal %}
+
+        <br/>
+      {% if testresult.passed %}
+        <div class="aet-output aet-success">
+      {% else %}
+        <div class="aet-output aet-error">
+      {% endif %}
+        <pre>{{testresult.output}}</pre>
+      </div>
+      <br/>
+  {% endfor %}
+
+{% endblock %}

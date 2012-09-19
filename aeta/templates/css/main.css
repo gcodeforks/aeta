@@ -7,132 +7,53 @@
  */
 
 
-/* Getting 2-panel layout to work */
-
-html {
-  height: 100%;
+/*
+ * Nested list of test modules, test cases, and test methods.
+ */
+.aet-nested-list li {
+  list-style-position: inside;
+  text-indent: -2em;
 }
 
-body {
-  height: 100%;
-  margin: 0;
-}
-
-.smaller-panel {
-  width: 40%;
-}
-
-.larger-panel {
-  width: 60%;
-}
-
-/* Left panel */
-
-#left {
-  float: left;
-  height: 100%;
-  overflow-y: auto;
-  margin: 0;
-}
-
-#index {
-  padding: 1em;
-}
-
-#index-title {
-  font-family: sans-serif;
-}
-
-#root {
-}
-
-.aet-children {
+.aet-testmodule {
   list-style-type: none;
-  padding-left: 2em;
-  margin-left: 0;
-}
-
-.aet-test {
-  font-weight: normal;
-  background-color: #e5ecf9;
-}
-
-.aet-label {
-  padding-left: 1em;
-  font-family: monospace;
-  word-break: break-all;
-}
-
-.aet-label:hover {
-  color: blue;
-}
-
-.aet-selected > .aet-label {
   font-weight: bold;
-}
-
-.aet-test.aet-unstarted {
-  background-color: #ebf5ff;
-}
-
-.aet-test.aet-running {
-  background-color: #ffc;
-}
-
-.aet-test.aet-error {
-  background-color: #f99;
-}
-
-.aet-test.aet-fail {
-  background-color: #fcc;
-}
-
-.aet-test.aet-pass {
-  background-color: #cfc;
-}
-
-/* Right panel */
-
-#right {
-  float: left;
-  height: 100%;
-  overflow-y: auto;
-}
-
-#details-header {
-  min-height: 5em;
+  background-color: #e5ecf9;
   margin-top: 1em;
 }
 
-#displayed-test-name {
-  font-size: 150%;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: monospace;
+.aet-testcase {
+  list-style-type: none;
+  font-weight: normal;
+  background-color: #d9e7f1;
+  margin-top: .5em;
+  margin-bottom: .5em;
 }
 
-#displayed-test-name.aet-running {
-  color: #808000;
+.aet-testmethod {
+  list-style-type: none;
+  background-color: #c2daf7;
+  margin-bottom: .2em;
 }
 
-#displayed-test-name.aet-error {
-  color: #900;
+.aet-testcase ul {
+  margin-top: .5em;
 }
 
-#displayed-test-name.aet-fail {
-  color: #c00;
+/*
+ * Test results styles.
+ */
+ul.aet-testresults {
+  list-style-type: none;
+  padding-left: 0;
 }
 
-#displayed-test-name.aet-pass {
-  color: #093;
-}
-
-#output {
-  white-space: pre-wrap;
-  word-break: break-all;
-  border-style: solid;
-  border-width: 1px;
-  padding: 0.2em;
+/*
+ * Test results styles.
+ */
+.aet-row {
+  margin: 0.5em;
+  padding: 0.3em;
 }
 
 /*
@@ -152,10 +73,10 @@ body {
   padding: 1em;
 }
 
-.aet-output.aet-success {
+.aet-success {
   background-color: #bbffbb;
 }
 
-.aet-output.aet-error {
+.aet-error {
   background-color: #ffaaaa;
 }

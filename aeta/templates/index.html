@@ -1,59 +1,60 @@
 {% extends "base.html" %}
 
-{% block javascript %}
-  ROOT_NAME = unescape('{{ root_name }}');
-  REST_PATH = unescape('{{ rest_path }}');
-{% endblock %}
-
-{% block head %}
-  <script type="text/javascript"
-          src="//ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js">
-  </script>
-  <script type="text/javascript" src="{{ static_path }}index.js"></script>
-  <script type="text/javascript">
-    $(aeta.initialize);
-  </script>
-{% endblock %}
-
 {% block body %}
 
-<div id="left" class="larger-panel">
-  <div id="index">
-    <h1 id="index-title">Tests for {{ title }}</h1>
-    <div id="checkboxes">
-      <label>Show:</label>
-      <input id="show-unstarted" type="checkbox" class="aet-show-box"
-             checked="checked"/>
-      <label for="show-unstarted">Not run</label>
-      <input id="show-running" type="checkbox" class="aet-show-box"
-             checked="checked"/>
-      <label for="show-running">Running</label>
-      <input id="show-error" type="checkbox" class="aet-show-box"
-             checked="checked"/>
-      <label for="show-error">Error</label>
-      <input id="show-fail" type="checkbox" class="aet-show-box"
-             checked="checked"/>
-      <label for="show-fail">Failure</label>
-      <input id="show-pass" type="checkbox" class="aet-show-box"
-             checked="checked"/>
-      <label for="show-pass">Passed</label>
-    </div>
-    <br/>
-    <div id="root">
-    </div>
-    <p id="loading">Loading tests...</p>
-  </div>
-</div>
+<h1>{{ title }}</h1>
 
-<div id="right" class="smaller-panel">
-  <div id="details">
-    <div id="details-header">
-      <div id="displayed-test-name"></div>
-      <button id="run-again" style="display: none;">Run again</button>
-    </div>
-    <pre id="output">No test selected.</pre>
-  </div>
-</div>
+  <!-- import errors -->
+  {% if import_errors %}
+    {% ifnotequal import_errors 0 %}
+      <h2>Import Errors</h2>
+      <ul class="aet-error">
+      {% for item in import_errors %}
+        <li><a href="{{ importcheck_url }}{{ item.0 }}">{{ item.0 }}</a></li>
+      {% endfor %}
+      </ul>
+    {% endifnotequal %}
+  {% endif %}
 
+  <!-- available tests -->
+  <a name="automatic"></a>
+  <h2>Automatic Tests</h2>
+  <a href="{{ automatic_url }}">
+    Run all automatic tests
+  </a>
+  {% if moduledata %}
+    <ul class="aet-testmodule aet-nested-list">
+    {% for module in moduledata %}
+      {% if module.load_error %}
+      <!-- skip modules which could not be imported -->
+      {% else %}
+        <li class="aet-testmodule">
+          <a href="{{ automatic_url }}{{ module.fullname }}">
+            {{ module.fullname }}
+          </a>
+        </li>
+        <ul class="aet-testcase">
+        {% for item in module.tests.items %}
+          <li class="aet-testcase">
+            <a href="{{ automatic_url }}{{ module.fullname }}.{{ item.0 }}">
+              {{ module.fullname }}.{{ item.0 }}
+            </a>
+            <ul class="aet-testmethod">
+            {% for testmethod in item.1 %}
+              <li class="aet-testmethod">
+                <a href="{{ automatic_url }}{{ module.fullname }}.{{ item.0 }}.{{ testmethod }}">
+                  {{ module.fullname }}.{{ item.0 }}.{{ testmethod }}
+                </a>
+              </li>
+              {% endfor %}
+              </ul>
+            </li>
+          {% endfor %}
+          </ul>
+        </li>
+      {% endif %}
+    {% endfor %}
+    </ul>
+  {% endif %}
 
 {% endblock %}

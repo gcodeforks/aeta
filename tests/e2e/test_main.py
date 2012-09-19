@@ -1,4 +1,4 @@
-# Copyright 2012 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Tests for the entry point of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import unittest
 
@@ -36,14 +36,18 @@ class GetUrlMappingTest(unittest.TestCase):
   # config attributes dynamically assigned - pylint:disable-msg=E1101
   def test_mapping(self):
     conf = config.Config(url_path='/test-all/')
-    config.get_config = lambda: conf
+    config.get_config = lambda : conf
     mapping = main.get_url_mapping()
-    found_static_path = False
+    found_importcheck_path = False
+    found_automatic_path = False
     found_default_path = False
     for path, _ in mapping:
-      if path == conf.url_path_static + '(.*)':
-        found_static_path = True
-      if path == conf.url_path + '(.*)':
+      if path == conf.url_path_importcheck + '(.*)':
+        found_importcheck_path = True
+      if path == conf.url_path_automatic + '(.*)':
+        found_automatic_path = True
+      if path == conf.url_path + '.*':
         found_default_path = True
-    self.assertTrue(found_static_path)
+    self.assertTrue(found_importcheck_path)
+    self.assertTrue(found_automatic_path)
     self.assertTrue(found_default_path)

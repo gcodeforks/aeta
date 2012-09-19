@@ -1,4 +1,4 @@
-# Copyright 2012 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ user-defined granularity.
 Currently, this module is able to handle the following types of
 objects:
 
-- all test packages
 - packages containing test cases
 - modules containing test cases
 - test case classes
@@ -32,327 +31,65 @@ This allows users to invoke tests at different levels of granularity,
 e.g., running all tests from a certain package or only a particular
 method of a test case.
 
-Test objects are addressed by their full name. To name all the tests in
-conf.test_package_modules, the name is ''. For packages, this name is the the
-name of the package, e.g., my.package. For modules this name is the name of the
-module, e.g., my.package.module. For classes this name is the module name plus
-the class name my.package.module.class. Finally, for methods the fullname
-consists of the full class name plus the name of the method, e.g.,
+Objects are addressed by their full name. For packages, this name is
+the the name of the package, e.g., my.package. For modules this name
+is the name of the module, e.g., my.package.module. For classes this
+name is the module name plus the class name
+my.package.module.class. Finally, for methods the fullname consists of
+the full class name plus the name of the method, e.g.,
 my.package.module.class.method.
-
-A test unit is a test object that is a single unit of work within a test
-object.  Each test unit will be run in its own task.  For example, by default
-if the test object is a package, its units will be the modules within the
-package.
 """
 
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
-
-import functools
 import inspect
+import logging
 import os
 import re
+import StringIO
 import sys
 import traceback
 import types
 import unittest
 
-from aeta import config
-from aeta import utils
+from aeta import models
 
 
 __all__ = ['get_abs_path_from_package_name',
            'get_root_relative_path',
+           'is_module',
            'load_module_from_module_name',
-           'get_module_names_in_package',
+           'load_modules',
            'get_requested_object',
            'extract_testcase_and_test_method_names',
            'create_module_data',
-           'get_test_suite_from_name',
-           'get_test_unit_names',
-          ]
+           'run_test',
+           'load_and_run_tests']
 
 
-class TestObject(object):
-  """A object representing a collection of tests.
+def check_type(obj, name, type_):
+  """Check the type of an object and raise an error if it does not match.
 
-  Attributes:
-    fullname: The full name of the test object.
+  If you do not set type_name, type_.__name__ will be used in the
+  error message.
+
+  Args:
+    obj: The object to check.
+    name: Name of the object shown in a possible error message.
+    type_: The expected type of obj.
+
+  Raises:
+    TypeError: if obj does not match type_.
   """
-
-  def __init__(self, fullname):
-    """Initializes the object.
-
-    Args:
-      fullname: The full name of the test object.
-    """
-    utils.check_type(fullname, 'fullname', str)
-    self.fullname = fullname
-
-  def get_units(self, conf, errors_out=None):
-    """Gets all test units in an object.
-
-    Each test unit is a test object that should be run in its own task.  Each
-    unit is a test package, module, class, or test.  As many units as possible
-    are returned, subject to the following restrictions:
-    1.  A module with setUpModule/tearDownModule, or a class with
-        setUpClass/tearDownClass, will not be split up.  This avoids
-        duplicating work and running things in parallel that are not supposed
-        to be run in parallel.  If duplicating the work is acceptable and it's
-        important for the module or class to be parallel, then the user should
-        put it in setUp rather than setUpModule or setUpClass.
-    2.  Multiple test objects of a certain type should only be run in parallel
-        if the appropriate parallelize_{modules,classes,methods} is set.  For
-        example if parallelize_classes is set to False, then all classes in a
-        module must be run in the same test unit.  Due to task queue overhead,
-        parallelizing small units can degrade performance.
-
-    Args:
-      conf: A Config object to use for determining parallelization.
-      errors_out: A list to which import error tracebacks are appended, or None
-          to ignore errors.
-
-    Returns:
-      A list of TestObject instances for units contained in this object.
-    """
-    raise NotImplementedError('get_units')
-
-  def get_methods(self, conf, errors_out=None):
-    """Gets a list of test methods contained in this object.
-
-    Args:
-      conf: The Config that specifies how to load tests.
-      errors_out: A list to which import error tracebacks are appended, or None
-          to ignore errors.
-
-    Returns:
-      A list of Method instances.
-    """
-    raise NotImplementedError('get_methods')
-
-  def get_suite(self, conf, errors_out=None):
-    """Gets a TestSuite containing all tests in this object.
-
-    Args:
-      conf: The Config that specifies how to load tests.
-      errors_out: A list to which import error tracebacks are appended, or None
-          to ignore errors.
-
-    Returns:
-      A TestSuite containing all tests in the object.
-    """
-    methods = self.get_methods(conf, errors_out)
-    return unittest.TestSuite([method.get_test_case() for method in methods])
-
-
-class TestContainer(TestObject):
-  """A test object that contains other test objects."""
-
-  def get_children(self, conf, errors_out):
-    """Gets a list of test objects contained in this container.
-
-    Args:
-      conf: A Config object for determining where tests are.
-      errors_out: A list to which import error tracebacks are appended, or None
-          to ignore errors.
-
-    Returns:
-      A list of TestObject instances contained in this object.
-    """
-    raise NotImplementedError('get_children')
-
-  def is_parallel(self, conf):
-    """Determines whether tests in this object should be parallelized.
-
-    Args:
-      conf: A Config object for determining parallelization.
-
-    Returns:
-      Whether or not this object should be split into multiple units to be run
-          in parallel.
-    """
-    raise NotImplementedError('is_parallel')
-
-  def get_methods(self, conf, errors_out=None):
-    methods = []
-    for child in self.get_children(conf, errors_out):
-      methods.extend(child.get_methods(conf, errors_out))
-    return methods
-
-  def get_units(self, conf, errors_out=None):
-    if self.is_parallel(conf):
-      units = []
-      for child in self.get_children(conf, errors_out):
-        units.extend(child.get_units(conf, errors_out))
-      return units
-    return [self]
-
-
-class Root(TestContainer):
-  """Represents the root (named '').
-
-  It contains all packages in the configured test_package_names.
-  """
-
-  def __init__(self):
-    super(Root, self).__init__('')
-
-  def is_parallel(self, conf):
-    return conf.parallelize_modules
-
-  def get_children(self, conf, errors_out):
-    return [get_requested_object(p, conf) for p in conf.test_package_names]
-
-
-class Package(TestContainer):
-  """Represents a package of tests.
-
-  It contains all modules in the package.
-  """
-
-  def __init__(self, fullname):
-    super(Package, self).__init__(fullname)
-
-  def is_parallel(self, conf):
-    return conf.parallelize_modules
-
-  def get_children(self, conf, errors_out):
-    modules = get_module_names_in_package(self.fullname,
-                                          conf.test_module_pattern)
-    children = []
-    for module_name in modules:
-      module = load_module_from_module_name(
-          module_name, errors_out, include_import_error=True,
-          include_test_functions=conf.include_test_functions)
-      if module:
-        children.append(Module(module_name, module))
-    return children
-
-
-class Module(TestContainer):
-  """Represents a module containing tests.
-
-  It contains all TestCase subclasses in the package.
-
-  Attributes:
-    module: The module this object represents.
-  """
-
-  def __init__(self, fullname, module):
-    utils.check_type(module, 'module', types.ModuleType)
-    super(Module, self).__init__(fullname)
-    self.module = module
-
-  def is_parallel(self, conf):
-    return conf.parallelize_classes and not (
-        hasattr(self.module, 'setUpModule') or
-        hasattr(self.module, 'tearDownModule'))
-
-  def get_children(self, conf, errors_out):
-    classes = []
-    for cls_name in dir(self.module):
-      cls = getattr(self.module, cls_name)
-      if isinstance(cls, type) and issubclass(cls, unittest.TestCase):
-        classes.append(Class('%s.%s' % (self.fullname, cls_name), cls))
-    return classes
-
-
-class Class(TestContainer):
-  """Represents a test class (a subclass of TestCase).
-
-  It contains all methods of the class that match the appropriate pattern
-  defined by the unittest module (by default, the ones that start with 'test').
-
-  Attributes:
-    class_: The TestCase subclass this object represents.
-  """
-
-  def __init__(self, fullname, class_):
-    utils.check_type(class_, 'class_', type)
-    super(Class, self).__init__(fullname)
-    self.class_ = class_
-
-  def is_parallel(self, conf):
-    if not conf.parallelize_methods:
-      return False
-    for name in ['setUpClass', 'tearDownClass']:
-      # Check if self.class_ overrode the method by comparing its
-      # implementation to unittest.TestCase's.
-      class_method = getattr(self.class_, name, None)
-      class_func = class_method and class_method.im_func
-      super_method = getattr(unittest.TestCase, name, None)
-      super_func = super_method and super_method.im_func
-      if class_func is not super_func:
-        return False
-    return True
-
-  def get_children(self, conf, errors_out):
-    methods = []
-    for method_name in unittest.TestLoader().getTestCaseNames(self.class_):
-      methods.append(Method('%s.%s' % (self.fullname, method_name),
-                            self.class_, method_name))
-    return methods
-
-
-class Method(TestObject):
-  """Represents a test method.
-
-  Attributes:
-    class_: The TestCase subclass containing this method.
-    method_name: The name of the method.
-  """
-
-  def __init__(self, fullname, class_, method_name):
-    utils.check_type(class_, 'class_', type)
-    utils.check_type(method_name, 'method_name', str)
-    super(Method, self).__init__(fullname)
-    self.class_ = class_
-    self.method_name = method_name
-
-  def get_units(self, conf, errors_out=None):
-    return [self]
-
-  def get_methods(self, conf, errors_out=None):
-    return [self]
-
-  def get_test_case(self):
-    """Gets a unittest.TestCase object that will run this method.
-
-    Returns:
-      A TestCase for this method.  It will have an extra attribute, 'fullname',
-          set to self.fullname.
-    """
-    case = self.class_(self.method_name)
-    case.fullname = self.fullname
-    return case
-
-
-class BadTest(TestObject):
-  """Represents a test object that does not exist or could not be loaded.
-
-  Attributes:
-    exists: A boolean indicating whether or not the object exists.  The object
-        could exist but might not have been loaded successfully.
-    load_errors: A list of (fullname, error string) for the errors encountered
-        getting this object.
-  """
-
-  def __init__(self, fullname, exists, load_errors):
-    utils.check_type(exists, 'exists', bool)
-    utils.check_type(load_errors, 'load_errors', list)
-    if not load_errors:
-      raise ValueError('No load errors specified for BadTest')
-    super(BadTest, self).__init__(fullname)
-    self.exists = exists
-    self.load_errors = load_errors
-
-  def get_units(self, conf, errors_out=None):
-    if errors_out is not None: errors_out.extend(self.load_errors)
-    return []
-
-  def get_methods(self, conf, errors_out=None):
-    if errors_out is not None: errors_out.extend(self.load_errors)
-    return []
+  if not isinstance(obj, type_):
+    if type_ == str:
+      type_name = 'string'
+    elif type == types.ModuleType:
+      type_name = 'module'
+    else:
+      type_name = type_.__name__
+    raise TypeError('"%s" must be a %s, not a %s.' %
+                    (name, type_name, type(obj)))
 
 
 def get_abs_path_from_package_name(packagename):
@@ -369,13 +106,10 @@ def get_abs_path_from_package_name(packagename):
   Raises:
     TypeError: Wrong input arguments.
   """
-  utils.check_type(packagename, 'packagename', str)
+  check_type(packagename, 'packagename', str)
   errors = []
-  mod = load_module_from_module_name(packagename, errors, reload_mod=False,
-                                     include_test_functions=False)
-  # The __init__ module is not a package, but anything else whose file's name
-  # ends with __init__.py(c) is.
-  if not mod or mod.__name__.split('.')[-1] == '__init__':
+  mod = load_module_from_module_name(packagename, errors, reload_mod=False)
+  if not mod:
     return None
   filename = inspect.getfile(mod)
   if filename.endswith('__init__.py'):
@@ -404,8 +138,8 @@ def get_root_relative_path(path, root):
   Raises:
     TypeError: Wrong input arguments.
   """
-  utils.check_type(path, 'path', str)
-  utils.check_type(root, 'root', str)
+  check_type(path, 'path', str)
+  check_type(root, 'root', str)
   if not root or not os.path.isdir(root):
     return None
   path_parts = path.split(os.sep)
@@ -417,63 +151,37 @@ def get_root_relative_path(path, root):
   return '/'.join(path_parts[len(root_parts):])
 
 
-def _wrap_function(func):
-  """Wraps a function with a wrapper that discards a single arguments.
+def is_module(modulename):
+  """Returns True if the object identified by modulename is an existing module.
 
-  This is to allow functions to be used as methods similarly to using
-  staticmethod, but still contain a reference to the class and return True for
-  inspect.ismethod calls.
+  Note that this function is based on the import of the given module.
 
   Args:
-    func: A function that takes no arguments to wrap.
+    modulename: The name of the module, e.g., package.subpackage.module.
 
   Returns:
-    A one argument function that wraps the provided function.
+    True, if the such a module exists, False otherwise.
+
+  Raises:
+    TypeError: Wrong input arguments.
   """
-  return functools.wraps(func)(lambda self: func())
+  check_type(modulename, 'modulename', str)
+  errors = []
+  mod = load_module_from_module_name(modulename, errors, reload_mod=False)
+  return bool(mod)
 
 
-def wrap_test_functions(module):
-  """Wraps test functions with a new TestCase subclass.
-
-  Args:
-    module: A module to search for test functions to wrap.
-  """
-  _, _, submodule_name = module.__name__.rpartition('.')
-  test_case_name = ''.join(
-      s[:1].upper() + s[1:] for s in submodule_name.split('_'))
-  test_case_name += 'WrappedTestFunctions'  # Prevent name collision.
-  if hasattr(module, test_case_name):
-    return
-  test_functions = {}
-  for name, obj in module.__dict__.items():
-    if inspect.isfunction(obj) and name.startswith('test'):
-      test_functions[name] = _wrap_function(obj)
-  if test_functions:
-    test_case = type(test_case_name, (unittest.TestCase,), test_functions)
-    test_case.__module__ = module.__name__
-    module.__dict__[test_case_name] = test_case
-
-
-def load_module_from_module_name(fullname, errors_out=None, reload_mod=False,
-                                 include_import_error=False,
-                                 include_test_functions=True):
+def load_module_from_module_name(fullname, errors_out, reload_mod=True):
   """Load a module.
 
-  Errors which occurred while importing the module are appended to errors_out.
-  An error is appended as (fullname, error_traceback) tuple.
+  Errors which occurred during the import process are appended to
+  errors_out. An error is appended as (fullname, error_traceback)
+  tuple.
 
   Args:
     fullname: The full module name, e.g., package.subpackage.module.
-    errors_out: A list to which import error tracebacks are appended, or None
-        to ignore errors.
+    errors_out: A list to which import error tracebacks are appended.
     reload_mod: Try to remove module before reloading it.
-    include_import_error: Whether to include an error tuple in case the module
-        does not exist.
-    include_test_functions:  Whether to wrap test functions into a test case
-        class.  Note that if this is False and the module has already been
-        imported with include_test_functions=True, then the module will still
-        have the wrapped test functions from before.
 
   Returns:
     The loaded module or None if the module could not be imported.
@@ -481,11 +189,9 @@ def load_module_from_module_name(fullname, errors_out=None, reload_mod=False,
   Raises:
     TypeError: Wrong input arguments.
   """
-  utils.check_type(fullname, 'fullname', str)
-  utils.check_type(errors_out, 'errors_out', (types.NoneType, list))
-  utils.check_type(reload_mod, 'reload_mod', bool)
-  utils.check_type(include_import_error, 'include_import_error', bool)
-  utils.check_type(include_test_functions, 'include_test_functions', bool)
+  check_type(fullname, 'fullname', str)
+  check_type(errors_out, 'errors_out', list)
+  check_type(reload_mod, 'reload_mod', bool)
   module = None
   try:
     loaded_by_import = False
@@ -495,34 +201,24 @@ def load_module_from_module_name(fullname, errors_out=None, reload_mod=False,
     module = sys.modules[fullname]
     if reload_mod and not loaded_by_import:
       module = reload(module)
-    if include_test_functions:
-      wrap_test_functions(module)
-  # pylint: disable-msg=W0703
-  except:
-    if errors_out is not None:
-      if include_import_error:
-        errors_out.append((fullname, traceback.format_exc()))
-      else:
-        # The error should only be noted if the exception was raised from
-        # within the imported module, rather than being raised because the
-        # module did not exist.  To check this, walk the traceback stack and
-        # look for a module with __name__ == fullname (or None due to the
-        # broken module being cleared).
-        tb = sys.exc_info()[2]
-        while tb:
-          if tb.tb_frame.f_globals['__name__'] in [None, fullname]:
-            errors_out.append((fullname, traceback.format_exc()))
-            break
-          tb = tb.tb_next
+  #pylint: disable-msg=W0703
+  except Exception:
+    # For example, NotImplementedError is raised when a module uses
+    # functionality which is not allowed in AppEngine, e.g., socket
+    # usage.
+    errors_out.append((fullname, traceback.format_exc()))
   return module
 
+# TODO(schuppe): too many local variables - pylint: disable-msg=R0914,R0912
+def load_modules(packagename, errors_out, module_pattern, depth=0):
+  """Load all modules which are part of the package and match module_pattern.
 
-# TODO(user): too many local variables - pylint: disable-msg=R0914,R0912
-def get_module_names_in_package(packagename, module_pattern, depth=0):
-  """Get names of all modules in the package that match module_pattern.
+  Errors which occured during the import process are appended to
+  errors_out. An error is appended as (fullname, error_traceback)
+  tuple.
 
   Since all modules found at the location of package and below are
-  considered, a traversal of the entire directory structure is
+  considered , a traversal of the entire directory structure is
   needed. This can be an expansive operation if your path will contain
   many subdirectories and/or files.
 
@@ -533,19 +229,21 @@ def get_module_names_in_package(packagename, module_pattern, depth=0):
 
   Args:
     packagename: The name of the package, e.g., package.subpackage.
+    errors_out: A list to which import error tracebacks are appended.
     module_pattern: The pattern of modules to look at.
     depth: Maximum depth of directory traversal.
 
   Returns:
-    A list of full names of modules in this package that match the pattern.
+    A list of all loaded modules.
 
   Raises:
     TypeError: Wrong input arguments.
     ValueError: If depth is smaller than 0.
   """
-  utils.check_type(packagename, 'packagename', str)
-  utils.check_type(module_pattern, 'module_pattern', str)
-  utils.check_type(depth, 'depth', int)
+  check_type(packagename, 'packagename', str)
+  check_type(errors_out, 'errors_out', list)
+  check_type(module_pattern, 'module_pattern', str)
+  check_type(depth, 'depth', int)
   if depth < 0:
     raise ValueError('"depth" must be at least 0.')
   path = get_abs_path_from_package_name(packagename)
@@ -588,97 +286,264 @@ def get_module_names_in_package(packagename, module_pattern, depth=0):
           subpackage_split = root_split[len(path_split) - 1:]
         module_split = packagename_split + subpackage_split
         modulename = '.'.join(module_split + [short_modulename])
-        res.append(modulename)
-  res.sort()
+        new_errors_out = []
+        module = load_module_from_module_name(modulename, new_errors_out)
+        if module is not None:
+          res.append(module)
+        else:
+          errors_out.extend(new_errors_out)
+  res.sort(key=lambda x: x.__name__)
   return res
 
 
-def _is_prefix(prefix, name):
-  """Determines whether one fullname is a prefix of another.
+# TODO(schuppe): too many return statements - pylint: disable-msg=R0911
+def get_requested_object(fullname):
+  """Get the object described with fullname.
 
-  Args:
-    prefix: The fullname that might be a prefix.
-    name: The entire fullname.
-
-  Returns:
-    A boolean indicating whether or not the first fullname is a prefix of the
-        second.
-  """
-  prefix_parts = prefix.split('.') if prefix else []
-  name_parts = name.split('.') if name else []
-  return name_parts[:len(prefix_parts)] == prefix_parts
-
-
-def _is_in_test_package(fullname, conf):
-  """Determines whether the given fullname is in a configured test package.
-
-  Args:
-    fullname: The name of a test object.
-    conf: The configuration to use.
-
-  Returns:
-    A boolean indicating whether or not the fullname is valid (in one of the
-    configured test packages).
-  """
-  return any(_is_prefix(p, fullname) for p in conf.test_package_names)
-
-
-def get_requested_object(fullname, conf):
-  """Gets the TestObject with the particular name.
+  Note that in order to retrieve the requested object, the object
+  itself or the the enclosing module has to be loaded.  Currently,
+  packages, modules, classes and methods (unbound) defined in classes
+  can be retrieved.
 
   Args:
     fullname: Name of the object, e.g. package.module.class.method.
-    conf: The configuration to use.
 
   Returns:
-    A TestObject, which might be BadTest if the object cannot be found or
-        loaded correctly.
+    Returns the requested object or None if fullname does not match an object.
 
   Raises:
-    TypeError: Wrong input arguments.
+    TypeError: Wrong input argument.
   """
-  utils.check_type(fullname, 'fullname', str)
-  utils.check_type(conf, 'conf', config.Config)
+  check_type(fullname, 'fullname', str)
   if not fullname:
-    return Root()
-  if not _is_in_test_package(fullname, conf):
-    msg = ('Test object %s is not contained in one of the configured '
-           'test_package_names in aeta.yaml.' % fullname)
-    return BadTest(fullname, False, [(fullname, msg)])
-  errors_out = []
-  # package or module
-  module = load_module_from_module_name(
-      fullname, errors_out, include_import_error=False,
-      include_test_functions=conf.include_test_functions)
-  if errors_out:
-    return BadTest(fullname, True, errors_out)
-  if module:
-    if get_abs_path_from_package_name(fullname):
-      return Package(fullname)
-    return Module(fullname, module)
+    return None
+  # package
+  if get_abs_path_from_package_name(fullname):
+    module = load_module_from_module_name(fullname, [], reload_mod=True)
+    return module
+  # module
+  if is_module(fullname):
+    module = load_module_from_module_name(fullname, [], reload_mod=True)
+    return module
   elements = fullname.split('.')
-  # test case class
-  module = load_module_from_module_name(
-      '.'.join(elements[:-1]), errors_out, include_import_error=False,
-      include_test_functions=conf.include_test_functions)
-  if errors_out:
-    return BadTest(fullname, True, errors_out)
-  if module:
-    cls = getattr(module, elements[-1], None)
+  # test case
+  mod_name = '.'.join(elements[:-1])
+  cls_name = elements[-1]
+  if is_module(mod_name):
+    module = load_module_from_module_name(mod_name, [], reload_mod=True)
+    cls = getattr(module, cls_name, None)
     if cls and inspect.isclass(cls):
-      return Class(fullname, cls)
-  module = load_module_from_module_name(
-      '.'.join(elements[:-2]), errors_out, include_import_error=False,
-      include_test_functions=conf.include_test_functions)
-  if errors_out:
-    return BadTest(fullname, True, errors_out)
-  if module:
-    cls_name, method_name = elements[-2:]
+      return cls
+  if len(elements) < 2:
+    return None
+  # test case method
+  mod_name = '.'.join(elements[:-2])
+  cls_name = elements[-2]
+  method_name = elements[-1]
+  if is_module(mod_name):
+    # No reload necessary, as this has been done for test case.
+    module = load_module_from_module_name(mod_name, [], reload_mod=False)
     cls = getattr(module, cls_name, None)
     if cls and inspect.isclass(cls):
       method = getattr(cls, method_name, None)
       if method and inspect.ismethod(method):
-        return Method(fullname, cls, method_name)
-  return BadTest(fullname, False,
-                 [(fullname, 'No test object %s.' % fullname)])
+        return method
+  return None
 
+# long name, but describes it - pylint:disable-msg=C0103
+def extract_test_cases_and_method_names(module):
+  """Retrieve all TestCases and their test methods from module.
+
+  The returned names are simple names, that is only the last element
+  of the full name.
+
+  Args:
+    module: The module from which test cases will be extracted.
+
+  Returns:
+    A dict of TestCase names as keys and a list of test method names as value.
+
+  Raises:
+    TypeError: Wrong input argument.
+  """
+  check_type(module, 'module', types.ModuleType)
+  res = {}
+  # unittest.findTestCases returns a suite of suites
+  loader = unittest.TestLoader()
+  try:
+    testsuites = loader.loadTestsFromModule(module)
+  # catch everything = pylint:disable-msg=W0703
+  except Exception, err:
+    logging.error("Unable to load %s: %s", module, str(err))
+    testsuites = []
+  for testsuite in testsuites:
+    for testcase in testsuite:
+      name = testcase.__class__.__name__
+      if name not in res:
+        res[name] = []
+      methodname = testcase.id().split('.')[-1]
+      res[name].append(methodname)
+  return res
+
+
+def create_module_data(modules, errors_out):
+  """Create model.ModuleData objects from modules and errors_out.
+
+  Args:
+    modules: A list of modules to construct moduledata objects from.
+    errors_out: A list of (fullname, import error traceback) tuples for modules
+            which could not be imported.
+
+  Returns:
+    A list of model.ModuleData objects.
+
+  Raises:
+    TypeError: Wrong input arguments.
+  """
+  check_type(modules, 'modules', list)
+  check_type(errors_out, 'errors_out', list)
+  moduledata = []
+  for module in modules:
+    fullname = module.__name__
+    tests = extract_test_cases_and_method_names(module)
+    data = models.ModuleData(fullname, tests=tests)
+    moduledata.append(data)
+  for error in errors_out:
+    fullname = error[0]
+    data = models.ModuleData(fullname, load_error=True,
+                             load_traceback=error[1])
+    moduledata.append(data)
+  return moduledata
+
+
+def _run_test_and_capture_output(test):
+  """Run a test and capture the entire output.
+
+  By default, the unittest framework only writes test related data to
+  the given stream and ignores other output, e.g., from print
+  statements. This function wraps the test execution and captures the
+  entire output.
+
+  Args:
+    test: The test to run (can be a TestSuite or a TestCase).
+
+  Returns:
+    A (testresult, output) tuple. 'testresult' is the return value of
+    the TestRunner, 'output' the entire output emitted during the test
+    run.
+  """
+  if not isinstance(test, unittest.TestSuite) and \
+        not isinstance(test, unittest.TestCase):
+    raise TypeError('"test" must be a TestSuite or a TestCase, not a %s.' %
+                    type(test))
+  # check_type(suite, 'suite', unittest.TestSuite)
+  output = StringIO.StringIO()
+  original_stdout = sys.stdout
+  original_stderr = sys.stderr
+  sys.stdout = output
+  sys.stderr = output
+  # This nested try-except-finally is a concession made to our 2.4
+  # pylint checker.
+  try:
+    try:
+      testresult = unittest.TextTestRunner(stream=output,
+                                           verbosity=3).run(test)
+    except Exception, err:
+      raise err
+  finally:
+    sys.stdout = original_stdout
+    sys.stderr = original_stderr
+  return testresult, output.getvalue()
+
+
+def run_test(obj):
+  """Run the tests defined in obj.
+
+  obj can be be a module containing unittest.TestCase classes, a
+  unittest.TestCase class itself, or an unbound method of such a
+  class.
+
+  Args:
+    obj: An object containing test definitions.
+
+  Returns:
+    A models.TestResultData object or None if no test object could be found.
+
+  Raises:
+    TypeError: obj does not match either of the described object types.
+  """
+  suite = None
+  fullname = None
+  if inspect.ismodule(obj):
+    suite = unittest.findTestCases(obj)
+    fullname = obj.__name__
+  elif inspect.isclass(obj):
+    suite = unittest.makeSuite(obj)
+    fullname = obj.__module__ + '.' + obj.__name__
+  elif inspect.ismethod(obj):
+    # unittest.findTestCases returns a suite of suites, each
+    # containing one test method
+    testsuites = unittest.makeSuite(obj.im_class)
+    for testsuite in testsuites:
+      # pylint: disable-msg=W0212
+      if testsuite._testMethodName == obj.__name__:
+        suite = testsuite
+        fullname = '%s.%s.%s' % (obj.__module__, obj.im_class.__name__,
+                                 obj.__name__)
+        break
+  else:
+    raise TypeError('The provided object is neither a test case, '
+                    'test method, nor module containing either one.')
+  if suite is None:
+    logging.info('No test found for  "%s"', obj.__name__)
+    return None
+  testresult, output = _run_test_and_capture_output(suite)
+  result = models.TestResultData(testresult, fullname)
+  result.output = output
+  return result
+
+
+def load_and_run_tests(fullname, module_pattern):
+  """Load and run all tests found at fullname.
+
+  This method returns a list of Test Results object which contain
+  the test results or, if the test could not be loaded, describing the
+  error when loading the test case.
+
+  Args:
+    fullname: Name of an object, e.g. package.subpackage.module
+    module_pattern: The pattern of modules to look at.
+
+  Returns:
+    A list of models.TestResultData objects describing the outcome of each
+    test.
+
+  Raises:
+    TypeError: Wrong input arguments.
+  """
+  check_type(fullname, 'fullname', str)
+  testmodules = []
+  errors_out = []
+  obj = get_requested_object(fullname)
+  if inspect.ismodule(obj):
+    errors_out = []
+    # If it is a package, load all modules found in this package
+    path = get_abs_path_from_package_name(fullname)
+    if path is not None:
+      modules = load_modules(fullname, errors_out, module_pattern)
+      testmodules.extend(modules)
+    else:
+      testmodules.append(obj)
+  elif inspect.isclass(obj):
+    testmodules.append(obj)
+  elif inspect.ismethod(obj):
+    testmodules.append(obj)
+  # Note that we silently ignore which occured importing or loading
+  # the module.
+  testresults = []
+  for module in testmodules:
+    result = run_test(module)
+    if result is None:
+      continue
+    testresults.append(result)
+  return testresults

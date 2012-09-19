@@ -1,4 +1,4 @@
-# Copyright 2012 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the local_client module of aeta."""
+"""Tests for the logic module of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 # Disable checking; pylint: disable-msg=C0111,W0212,R0904,C0103,R0902,R0201
 # - docstrings
@@ -24,12 +24,8 @@
 # - too many instance attributes
 # - method could be a function
 
-import cgi
-import cookielib
-import os.path
 import StringIO
 import sys
-import time
 import types
 import unittest
 import urllib2
@@ -37,10 +33,183 @@ import urllib2
 import simplejson as json
 
 from aeta import local_client
-from tests import utils
 
 
-class CreateLoadErrorTestCaseTest(unittest.TestCase):
+def get_mock_get_url_content(return_value, error_code=None,
+                           error_message=None):
+  """Create a mock _get_url_content function.
+
+  Args:
+    return_value: Content the mocked function should return.
+    error_code: urllib2.HTTPError the function should raise.
+    error_message: Optional error message to be returned.
+
+  Returns:
+    A mock function for local_client._get_url_content.
+  """
+
+  if not error_message:
+    error_message = 'an error message'
+
+  def mock_get_url_content(url):
+    if not error_code:
+      return return_value
+    error = urllib2.HTTPError(url, error_code, '', None, None)
+    error.read = lambda: error_message
+    raise error
+
+  return mock_get_url_content
+
+
+def build_module_data_str(fullname, tests=None, load_error=False,
+                          load_traceback=None):
+  """Build a module_data object as returned by the REST interface.
+
+  Args:
+    fullname: full name of a package of module.
+    tests: A dictionary with test classes as key values, and a list of
+           test method names.
+    load_error: Dalse if the object could be loaded, true if an error
+             occured.
+    load_traceback: Rhe traceback of the load error or None.
+
+  Returns:
+    A jsonized module_data object as returned by the REST interface.
+  """
+  module_data = {'fullname': fullname}
+  if tests:
+    module_data['tests'] = tests
+  module_data['load_error'] = load_error
+  module_data['load_traceback'] = load_traceback
+  return json.dumps(module_data)
+
+
+def build_test_data_response(module_data_strings, subpackages):
+  """Build a JSON string as returned by the aeta REST interface.
+
+  Args:
+    module_data_strings: List of module_data strings.
+    subpackages: List of subpackages.
+
+  Returns:
+    A valid JSON string.
+  """
+  json_string = '{"module_data": [%s], ' % ','.join(module_data_strings)
+  json_string += '"subpackages": %s}' % subpackages
+  json_string = json_string.replace("'", '"')
+  return json_string
+
+
+class TestModuleDataTest(unittest.TestCase):
+  """Tests for _TestModuleData."""
+
+  def setUp(self):
+    self.valid_dict = {'fullname': 'package.module.class.method',
+                       'load_traceback': 'multi-line\nstring',
+                       'tests': {'class': 'method1', 'method2': 'method3'}
+                      }
+
+  def test_load_from_dict_empty_dict(self):
+    d = {}
+    mod_data = local_client._TestModuleData.load_from_dict(d)
+    self.assertEqual(None, mod_data.fullname)
+    self.assertEqual(None, mod_data.load_traceback)
+    self.assertEqual({}, mod_data.tests)
+
+  def test_load_from_valid_dict(self):
+    d = self.valid_dict
+    mod_data = local_client._TestModuleData.load_from_dict(d)
+    self.assertEqual(d['fullname'], mod_data.fullname)
+    self.assertEqual(d['load_traceback'], mod_data.load_traceback)
+    self.assertEqual(d['tests'], mod_data.tests)
+
+  def test_load_from_valid_dict_with_extra_entries(self):
+    d = self.valid_dict
+    d['foo'] = 1
+    d['bar'] = 2
+    mod_data = local_client._TestModuleData.load_from_dict(d)
+    self.assertEqual(d['fullname'], mod_data.fullname)
+    self.assertEqual(d['load_traceback'], mod_data.load_traceback)
+    self.assertEqual(d['tests'], mod_data.tests)
+
+  def test_load_from_valid_dict_with_unicode_values(self):
+    d = self.valid_dict
+    for key in ['fullname', 'load_traceback', 'tests']:
+      value = d[key]
+      del d[key]
+      d[unicode(key)] = value
+    mod_data = local_client._TestModuleData.load_from_dict(d)
+    self.assertEqual(d['fullname'], mod_data.fullname)
+    self.assertEqual(d['load_traceback'], mod_data.load_traceback)
+    self.assertEqual(d['tests'], mod_data.tests)
+
+
+class CreateModuleTest(unittest.TestCase):
+  """Tests for _create_module."""
+
+  def test_default(self):
+    mod = local_client._create_module('foo')
+    self.assertEqual(types.ModuleType, type(mod))
+
+  def test_invalid_parent(self):
+    invalids = [1, 's', [], {}]
+    for invalid in invalids:
+      self.assertRaises(TypeError, local_client._create_module, 'foo', invalid)
+
+  def test_unicode_name(self):
+    mod = local_client._create_module(u'foo')
+    self.assertEqual('foo', mod.__name__)
+
+  def test_module_assigned_to_parent(self):
+    parent_mod = types.ModuleType('parent')
+    mod = local_client._create_module('foo', parent_mod)
+    self.assertTrue(hasattr(parent_mod, 'foo'))
+    self.assertEqual(parent_mod.foo, mod)
+
+  def test_attribute_already_exists(self):
+    parent_mod = types.ModuleType('parent')
+    parent_mod.foo = 42
+    self.assertRaises(ValueError, local_client._create_module, 'foo',
+                      parent_mod)
+
+
+class CreateClassTest(unittest.TestCase):
+  """Tests for _create_class."""
+
+  def setUp(self):
+    self.base_class = unittest.TestCase
+    self.parent_mod = types.ModuleType('parent')
+
+  def test_default(self):
+    cls = local_client._create_class('foo', self.base_class, self.parent_mod)
+    self.assertEqual(type, type(cls))
+    self.assertTrue(issubclass(cls, self.base_class))
+    self.assertTrue(hasattr(self.parent_mod, 'foo'))
+    self.assertEqual(self.parent_mod.foo, cls)
+
+  def test_invalid_base_class(self):
+    invalids = [1, 's', [], {}]
+    for invalid in invalids:
+      self.assertRaises(TypeError, local_client._create_class, 'foo',
+                        invalid, self.parent_mod)
+
+  def test_invalid_parent(self):
+    invalids = [1, 's', [], {}]
+    for invalid in invalids:
+      self.assertRaises(TypeError, local_client._create_class, 'foo',
+                        self.base_class, invalid)
+
+  def test_unicode_name(self):
+    cls = local_client._create_class(u'foo', self.base_class, self.parent_mod)
+    self.assertEqual('foo', cls.__name__)
+
+  def test_attribute_already_exists(self):
+    self.parent_mod.foo = 42
+    self.assertRaises(ValueError, local_client._create_class, 'foo',
+                      self.base_class, self.parent_mod)
+
+
+class CreateLoadErrorTestCaseTest(CreateClassTest):
   """Tests for _create_load_error_test_case."""
 
   def setUp(self):
@@ -56,558 +225,436 @@ class CreateLoadErrorTestCaseTest(unittest.TestCase):
     self.assertTrue(hasattr(cls, local_client.MODULE_LOAD_ERROR_METHOD_NAME))
 
 
-class ClientLoginAuthTest(unittest.TestCase, utils.MockAttributeMixin):
-  """Tests for ClientLoginAuth and Authenticator."""
+class CreateTestMethodTest(unittest.TestCase):
+  """Tests for _create_test_method."""
 
   def setUp(self):
-    self.url = 'http://www.example.com'
-    self.aeta_url = self.url + '/tests/'
-    self.expected_url = self.aeta_url + 'suffix'
-    self.expected_post_data = None
-    self.http_error_code = None
-    self.http_error_message = 'an error message'
-    self.http_content = '{"foo": "bar"}'
+    parent_mod = types.ModuleType('parent')
+    base_class = unittest.TestCase
+    self.parent = local_client._create_class('cls', base_class, parent_mod)
+    self.comm = local_client.AetaCommunicator('http://www.example.com')
 
-    # Mapping of email to (password, token).
-    self.email_info = {'admin@example.com': ('adminpass', 'admintoken'),
-                       'user@example.com': ('userpass', 'usertoken')}
-    # Mapping of token to whether they are an admin.
-    self.token_info = {'admintoken': True, 'usertoken': False}
-    # Is authorization required?
-    self.need_auth = False
-    # On auth fail, should the server redirect to a login page (rather than
-    # return 401/403)?
-    self.redirect = True
-    # Queue of (email or None, password) for credentials the user will enter.
-    self.credential_input = []
-    # Is there a stored cookie for someone logged in to the app server?
-    self.stored_is_logged_in = False
-    # Is this cookie for an admin user?
-    self.stored_is_admin = False
+  def test_default(self):
+    method = local_client._create_test_method('foo', self.comm, self.parent)
+    self.assertEqual(types.FunctionType, type(method))
+    method = local_client._create_test_method('foo.bar', self.comm,
+                                              self.parent)
+    self.assertEqual(types.FunctionType, type(method))
 
-    @self.mock(os.path)
-    def exists(filename):
-      return True
+  def test_invalid_parent(self):
+    invalids = [1, 's', [], {}]
+    for invalid in invalids:
+      self.assertRaises(TypeError, local_client._create_test_method, 'foo',
+                        self.comm, invalid)
 
-    @self.mock(cookielib)
-    class LWPCookieJar(object):
-      """Mock jar to save cookies in selfy.stored_* rather than a file."""
+  def test_unicode_name(self):
+    method = local_client._create_test_method(u'foo', self.comm, self.parent)
+    self.assertEqual('foo', method.__name__)
 
-      def __init__(self, filename):
-        self.filename = filename
-        self.is_logged_in = False
-        self.is_admin = False
+  def test_class_assigned_to_parent(self):
+    self.assertFalse(hasattr(self.parent, 'foo'))
+    local_client._create_test_method('foo', self.comm, self.parent)
+    self.assertTrue(hasattr(self.parent, 'foo'))
 
-      def load(jar_self):
-        jar_self.is_logged_in = self.stored_is_logged_in
-        jar_self.is_admin = self.stored_is_admin
+  def test_attribute_already_exists(self):
+    self.parent.foo = 42
+    self.assertRaises(ValueError, local_client._create_test_method, 'foo',
+                      self.comm, self.parent)
 
-      def clear(jar_self):
-        jar_self.is_logged_in = False
-        jar_self.is_admin = False
-
-      def save(jar_self):
-        self.stored_is_logged_in = jar_self.is_logged_in
-        self.stored_is_admin = jar_self.is_admin
-
-    @self.mock(local_client.ClientLoginAuth)
-    def _get_credentials(auth_self):
-      """Mock _get_credentials to use credential_input."""
-      in_email, in_pass = self.credential_input.pop(0)
-      if auth_self.email:
-        self.assertEqual(None, in_email)
-      else:
-        self.assertNotEqual(None, in_email)
-        auth_self.email = in_email
-      return (auth_self.email, in_pass)
-
-    class Opened(urllib2.HTTPError):
-      """A file-like object suitable for returning from open().
-
-      It also inherits from HTTPError so it can also be raised as an error.
-      """
-
-      def __init__(self, content, url, code=None):
-        self.content = content
-        self.url = url
-        self.code = code
-
-      def read(self):
-        return self.content
-
-      def close(self):
-        pass
-
-      def geturl(self):
-        return self.url
-
-    class Opener(object):
-      """An opener like the one returned by urllib2.build_opener()."""
-
-      def __init__(self, cookie_jar):
-        self.cookie_jar = cookie_jar
-
-      def open(opener_self, url, data=None):
-        if url == local_client._CLIENT_LOGIN_URL:
-          query = cgi.parse_qs(data)
-          email = query['Email'][0]
-          if email not in self.email_info:
-            raise Opened('Error=BadAuthentication', url, code=403)
-          exp_pass, token = self.email_info[email]
-          if exp_pass != query['Passwd'][0]:
-            raise Opened('Error=BadAuthentication', url, code=403)
-          return Opened('Auth=' + token, url)
-        elif url.startswith(self.url + local_client._APPSERVER_LOGIN_PATH):
-          query = cgi.parse_qs(url[url.find('?') + 1:])
-          token = query['auth'][0]
-          if token not in self.token_info:
-            raise Opened('Bad token', url, code=403)
-          opener_self.cookie_jar.is_admin = self.token_info[token]
-          opener_self.cookie_jar.is_logged_in = True
-          return Opened('', url)
-        else:
-          self.assertEqual(self.expected_url, url)
-          self.assertEqual(self.expected_post_data, data)
-          if self.need_auth and not opener_self.cookie_jar.is_admin:
-            if self.redirect:
-              redirect_url = 'https://accounts.google.com/ServiceLogin?a'
-              return Opened('login page', redirect_url)
-            if opener_self.cookie_jar.is_logged_in:
-              raise Opened('forbidden', url, code=403)
-            raise Opened('need login', url, code=401)
-          if self.http_error_code:
-            raise Opened(self.http_error_message, url,
-                         code=self.http_error_code)
-          return Opened(self.http_content, url)
-
-    @self.mock(urllib2)
-    def build_opener(processor):
-      self.assertTrue(processor.cookiejar)
-      return Opener(processor.cookiejar)
-
-  def tearDown(self):
-    self.tear_down_attributes()
-
-  def check_auth(self, test):
-    """Runs an authentication test with various settings.
-
-    Args:
-      test: A function to run with different settings.
-    """
-    self.need_auth = True
-    for self.redirect in [False, True]:
-      self.stored_is_logged_in = False
-      self.stored_is_admin = False
-      test()
-
-  def check_auth_success(self, auth=None, save_auth=True):
-    """Gets and checks REST data, requiring authentication to succeed."""
-    if auth is None:
-      auth = local_client.ClientLoginAuth(self.aeta_url)
-    test_data = auth.get_url_content(self.expected_url)
-    self.assertEqual(self.http_content, test_data)
-    self.assertEqual(save_auth, self.stored_is_logged_in)
-    self.assertEqual(save_auth, self.stored_is_admin)
-
-  def check_auth_fail(self, auth=None):
-    """Tries to get REST data, requiring authentication to fail."""
-    if auth is None:
-      auth = local_client.ClientLoginAuth(self.aeta_url)
-    self.assertRaises(local_client.AuthError, auth.get_url_content,
-                      self.expected_url)
-
-  def test_auth_success(self):
-    def test():
-      self.credential_input = [('admin@example.com', 'adminpass')]
-      self.check_auth_success()
-    self.check_auth(test)
-
-  def test_bad_password(self):
-    def test():
-      self.credential_input = [('admin@example.com', 'badpass')]
-      self.check_auth_fail()
-    self.check_auth(test)
-
-  def test_non_admin(self):
-    def test():
-      self.credential_input = [('user@example.com', 'userpass')]
-      self.check_auth_fail()
-    self.check_auth(test)
-
-  def test_stored_admin(self):
-    def test():
-      self.stored_is_logged_in = True
-      self.stored_is_admin = True
-      self.check_auth_success()
-    self.check_auth(test)
-
-  def test_stored_non_admin(self):
-    def test():
-      self.stored_is_logged_in = True
-      self.stored_is_admin = False
-      self.credential_input = [('admin@example.com', 'adminpass')]
-      self.check_auth_success()
-    self.check_auth(test)
-
-  def test_set_email(self):
-    def test():
-      self.credential_input = [(None, 'adminpass')]
-      comm = local_client.ClientLoginAuth(self.aeta_url,
-                                          email='admin@example.com')
-      self.check_auth_success(comm)
-    self.check_auth(test)
-
-  def test_set_email_non_admin(self):
-    def test():
-      self.stored_is_logged_in = True
-      self.stored_is_admin = True
-      self.credential_input = [(None, 'userpass')]
-      comm = local_client.ClientLoginAuth(self.aeta_url,
-                                          email='user@example.com')
-      self.check_auth_fail(comm)
-      self.assertFalse(self.stored_is_logged_in)
-      self.assertFalse(self.stored_is_admin)
-    self.check_auth(test)
-
-  def test_no_cookies_clear(self):
-    def test():
-      self.stored_is_logged_in = True
-      self.stored_is_admin = True
-      self.credential_input = [('admin@example.com', 'adminpass')]
-      comm = local_client.ClientLoginAuth(self.aeta_url, save_auth=False)
-      self.check_auth_success(comm, save_auth=False)
-    self.check_auth(test)
+  def test_methodName_Is_short_name(self):
+    method = local_client._create_test_method('foo', self.comm, self.parent)
+    self.assertEqual('foo', method.__name__)
+    self.assertTrue(hasattr(self.parent, 'foo'))
+    method = local_client._create_test_method('foo.bar', self.comm,
+                                              self.parent)
+    self.assertEqual('bar', method.__name__)
+    self.assertTrue(hasattr(self.parent, 'bar'))
 
 
-class MockAuthenticator(local_client.Authenticator):
-  """Mock Authenticator to make get_url_content return specified things.
-
-  Attributes:
-    test: The TestCase instance to use to report errors.
-    expected_url: The url that should be passed to get_url_content.
-    expected_data: The POST data that should be passed to get_url_content.
-    error_code: Which HTTP error to raise, or None to raise no error.
-    error_message: If there is an error, return this as the content.
-    url_content: If there is no error, return this as the content.
-  """
-
-  def __init__(self, test):
-    self.test = test
-    self.expected_url = None
-    self.expected_data = None
-    self.error_code = None
-    self.error_message = 'an error message'
-    self.url_content = 'content'
-
-  def get_url_content(self, url, data=None):
-    self.test.assertEqual(self.expected_url, url)
-    self.test.assertEqual(self.expected_data, data)
-    if not self.error_code:
-      return self.url_content
-    error = urllib2.HTTPError(url, self.error_code, '', None, None)
-    error.read = lambda: self.error_message
-    raise error
-
-
-class AetaCommunicatorTest(unittest.TestCase, utils.MockAttributeMixin):
+class AetaCommunicatorTest(unittest.TestCase):
   """Tests for AetaCommunicator."""
 
   def setUp(self):
     self.url = 'http://www.example.com'
-    self.authenticator = MockAuthenticator(self)
-    self.comm = local_client.AetaCommunicator(self.authenticator, self.url)
-    self.authenticator.expected_url = self.comm.rest_path + 'suffix'
+    self.comm = local_client.AetaCommunicator(self.url)
+    self.orig_get_url_content = local_client._get_url_content
 
   def tearDown(self):
-    self.tear_down_attributes()
+    local_client._get_url_content = self.orig_get_url_content
 
   def test_init(self):
-    local_client.AetaCommunicator(self.authenticator, 'some random string')
-    local_client.AetaCommunicator(self.authenticator, 'some random string',
+    local_client.AetaCommunicator('some random string')
+    local_client.AetaCommunicator('some random string',
                                   rest_path='another string')
 
-  def test_get_json_data_without_post(self):
-    url_content = self.authenticator.url_content = '{"foo": "bar"}'
-    test_data = self.comm._get_rest_json_data('suffix')
-    self.assertEqual(json.loads(url_content), test_data)
+  def test_get_json_data_without_name(self):
+    content = '{"foo": "bar"}'
+    local_client._get_url_content = get_mock_get_url_content(content)
+    test_data = self.comm._get_rest_data(self.comm.module_path)
+    self.assertEqual(content, test_data)
 
-  def test_get_json_data_with_post(self):
-    expected_data = self.authenticator.expected_data = {'a': 'b'}
-    url_content = self.authenticator.url_content = '{"foo": "bar"}'
-    test_data = self.comm._get_rest_json_data('suffix', expected_data)
-    self.assertEqual(json.loads(url_content), test_data)
+  def test_get_json_data_with_name(self):
+    content = '{"foo": "bar"}'
+    local_client._get_url_content = get_mock_get_url_content(content)
+    test_data = self.comm._get_rest_data(self.comm.module_path,
+                                         'some_test_name')
+    self.assertEqual(content, test_data)
 
   def test_get_json_data_with_http_error(self):
-    for self.authenticator.error_code in [400, 404, 500, 501, 502, 503]:
-      self.assertRaises(local_client.RestApiError,
-                        self.comm._get_rest_json_data, 'suffix')
+    for error_code in [400, 404, 500, 501, 502, 503]:
+      local_client._get_url_content = get_mock_get_url_content('', error_code)
+      self.assertRaises(local_client.RestApiError, self.comm._get_rest_data,
+                        self.comm.module_path)
 
   def test_get_json_data_with_http_error_500(self):
-    self.authenticator.error_code = 500
-    error_message = self.authenticator.error_message = 'server error message'
+    server_error_msg = 'server error message'
+    local_client._get_url_content = get_mock_get_url_content(self.url, 500,
+                                                         server_error_msg)
     error = None
     try:
-      self.comm._get_rest_json_data('suffix')
+      self.comm._get_rest_data(self.comm.module_path)
     except local_client.RestApiError, e:
       error = e
     self.assertTrue(self.url in str(error))
-    self.assertTrue(error_message in str(error))
-
-  def test_bad_json_from_server(self):
-    self.authenticator.url_content = 'bad json'
-    self.assertRaises(local_client.RestApiError, self.comm._get_rest_json_data,
-                      'suffix')
+    self.assertTrue(server_error_msg in str(error))
 
 
-class TestResultUpdaterTest(unittest.TestCase, utils.MockAttributeMixin):
-  """Tests for the _TestResultUpdater class."""
+  def test_get_test_module_data_converts_json_string(self):
+    content = '{"foo": "bar"}'
+    local_client._get_url_content = get_mock_get_url_content(content)
+    test_data = self.comm.get_test_module_data(self.comm.module_path)
+    self.assertEqual({'foo': 'bar'}, test_data)
+
+  def test_get_test_module_data_invalid_json(self):
+    content = 'invalid JSON'
+    local_client._get_url_content = get_mock_get_url_content(content)
+    self.assertRaises(local_client.RestApiError,
+                      self.comm.get_test_module_data, self.comm.module_path)
+
+  def test_get_test_result_data_converts_json_string(self):
+    content = '{"foo": "bar"}'
+    local_client._get_url_content = get_mock_get_url_content(content)
+    test_data = self.comm.get_test_result(self.comm.module_path)
+    self.assertEqual({'foo': 'bar'}, test_data)
+
+
+class LoadTestObjectBase(unittest.TestCase):
+  """Base class for tests of methods that load test objects."""
 
   def setUp(self):
-    self.communicator = local_client.AetaCommunicator(
-        local_client.Authenticator(), 'www.example.com')
-    self.testname = 'tests'
-    self.updater = local_client._TestResultUpdater(self.communicator,
-                                                   self.testname)
-    self.batch_info = None
-    self.future_batch_info = {
-        'num_units': 3,
-        'test_unit_methods': {
-            'tests.Case1': ['tests.Case1.test1', 'tests.Case1.test2'],
-            'tests.Case2': ['tests.Case2.test1', 'tests.Case2.test2'],
-            'tests.badmodule': ['tests.badmodule.Case.test_method']
-        },
-        'load_errors': [('tests.module', 'ImportError')]
-    }
-    self.started_batch = False
-    self.batch_id = 1234
-    self.sleep_count = 0
-    self.finished_results = [
-        {'load_errors': [],
-         'errors': [('tests.Case1.test1', 'TypeError')],
-         'failures': [('tests.Case1.test2', 'Things are not as expected')],
-         'fullname': 'tests.Case1',
-         'output': 'some stuff happened'},
-        None,
-        {'load_errors': [('tests.badmodule', 'ImportError')],
-         'errors': [],
-         'failures': [],
-         'fullname': 'tests.badmodule',
-         'output': 'some more stuff happened'}
-    ]
-
-    @self.mock(local_client.AetaCommunicator)
-    def start_batch(comm_self, testname):
-      self.assertEqual(self.testname, testname)
-      self.assertFalse(self.started_batch)
-      self.started_batch = True
-      return {'batch_id': self.batch_id}
-
-    @self.mock(local_client.AetaCommunicator)
-    def batch_info(comm_self, batch_id):
-      self.assertEqual(self.batch_id, batch_id)
-      return self.batch_info
-
-    @self.mock(time)
-    def sleep(secs):
-      self.batch_info = self.future_batch_info
-      if self.sleep_count >= 2:
-        self.finished_results[1] = {'load_errors': [], 'errors': [],
-                                    'failures': [], 'fullname': 'tests.Case2',
-                                    'output': 'everything is good'}
-      if self.sleep_count >= 3:
-        self.fail('Slept more than necessary')
-      self.sleep_count += 1
-
-    @self.mock(local_client.AetaCommunicator)
-    def batch_results(comm_self, batch_id, start):
-      self.assertEqual(self.batch_id, batch_id)
-      results = []
-      for i in range(start, len(self.finished_results)):
-        if not self.finished_results[i]: break
-        results.append(self.finished_results[i])
-      return results
-
-    # We need fake test cases to pass into generated test methods as self.
-    class Case(unittest.TestCase):
-
-      def test(self):
-        pass
-
-    self.test_case = Case('test')
+    self.comm = local_client.AetaCommunicator('http://www.example.com')
+    self.orig_get_url_content = local_client._get_url_content
 
   def tearDown(self):
-    self.tear_down_attributes()
-
-  def test_initialize(self):
-    self.updater.initialize()
-    self.assertEqual(self.future_batch_info['num_units'],
-                     self.updater.num_units)
-    self.assertEqual(self.future_batch_info['test_unit_methods'],
-                     self.updater.test_unit_methods)
-    self.assertEqual(dict(self.future_batch_info['load_errors']),
-                     self.updater.load_errors)
-
-  def test_immediate(self):
-    self.finished_results[1] = {
-        'load_errors': [], 'errors': [], 'failures': [],
-        'fullname': 'tests.Case2', 'output': 'everything is good'}
-
-    @self.mock(local_client.AetaCommunicator)
-    def start_batch(comm_self, testname):
-      self.assertEqual(self.testname, testname)
-      self.assertFalse(self.started_batch)
-      self.started_batch = True
-      return {'batch_info': self.future_batch_info,
-              'results': self.finished_results}
-
-    self.updater.initialize()
-    self.assertEqual(3, self.updater.num_units_finished)
-    self.assertEqual(5, len(self.updater.test_methods_finished))
-    self.assertEqual({'tests.Case1.test1': 'TypeError'},
-                     self.updater.test_errors)
-    self.assertEqual({'tests.Case1.test2': 'Things are not as expected'},
-                     self.updater.test_failures)
-    self.assertEqual(2, len(self.updater.load_errors))
-    self.assertEqual('some stuff happened',
-                     self.updater.test_outputs['tests.Case1.test1'])
-
-  def test_poll_results(self):
-    self.updater.initialize()
-    self.updater.poll_results()
-    # Should have updated using first test result.
-    self.assertEqual({'tests.Case1.test1': 'TypeError'},
-                     self.updater.test_errors)
-    self.assertEqual({'tests.Case1.test2': 'Things are not as expected'},
-                     self.updater.test_failures)
-    self.assertEqual(set(['tests.Case1.test1', 'tests.Case1.test2']),
-                     self.updater.test_methods_finished)
-    self.assertEqual(1, self.updater.num_units_finished)
-    self.assertEqual('some stuff happened',
-                     self.updater.test_outputs['tests.Case1.test1'])
-
-  def test_create_test_method_error(self):
-    self.updater.initialize()
-    method = self.updater.create_test_method('tests.Case1.test1')
-    self.assertRaises(local_client.TestError, method, self.test_case)
-
-  def test_create_test_method_fail(self):
-    self.updater.initialize()
-    method = self.updater.create_test_method('tests.Case1.test2')
-    self.assertRaises(AssertionError, method, self.test_case)
-
-  def test_create_test_method_pass(self):
-    self.updater.initialize()
-    method = self.updater.create_test_method('tests.Case2.test1')
-    # Capture printed output (which should be test output).
-    stdout = StringIO.StringIO()
-    self.mock(sys, 'stdout')(stdout)
-    # Should succeed without exceptions.
-    method(self.test_case)
-    self.assertTrue('everything is good' in stdout.getvalue())
-
-  def test_create_test_method_load_error(self):
-    self.updater.initialize()
-    method = self.updater.create_test_method('tests.badmodule.Case3.test1')
-    self.assertRaises(local_client.TestError, method, self.test_case)
+    local_client._get_url_content = self.orig_get_url_content
 
 
-class InsertTestMethodTest(unittest.TestCase):
-  """Tests for _insert_test_method."""
+class LoadTestModuleDataTest(LoadTestObjectBase):
+  """Tests for _load_test_module_data."""
 
   def setUp(self):
-    self.test_method = lambda test_case_self: None
-
-  def test_new_class(self):
-    classes = {}
-    local_client._insert_test_method(classes, unittest.TestCase,
-                                     'module.Class.test_method',
-                                     self.test_method)
-    cls = classes.get('module.Class', None)
-    self.assertTrue(issubclass(cls, unittest.TestCase))
-    self.assertEqual('module.Class', cls.__name__)
-    method = getattr(cls, 'test_method', None)
-    self.assertEqual(self.test_method, method.im_func)
-    self.assertEqual('test_method', method.__name__)
-
-  def test_old_class(self):
-    class Class(unittest.TestCase):
-      def test1(self):
-        pass
-    classes = {'module.Class': Class}
-    local_client._insert_test_method(classes, unittest.TestCase,
-                                     'module.Class.test2', self.test_method)
-    self.assertEqual(Class, classes.get('module.Class', None))
-    method = getattr(Class, 'test2', None)
-    self.assertEqual(self.test_method, method.im_func)
-    self.assertEqual('test2', method.__name__)
-
-  def test_old_method(self):
-    class Class(unittest.TestCase):
-      def test_method(self):
-        pass
-    old_method = Class.test_method
-    classes = {'module.Class': Class}
-    # Should do nothing, preserving old method.
-    local_client._insert_test_method(classes, unittest.TestCase,
-                                     'module.Class.test_method',
-                                     self.test_method)
-    self.assertEqual(old_method, Class.test_method)
-
-
-class CreateTestCasesTest(unittest.TestCase, utils.MockAttributeMixin):
-  """Tests for create_test_cases."""
-
-  def setUp(self):
-    self.load_errors = {'tests.badmodule': 'ImportError'}
-    self.test_unit_methods = {
-        'tests.module.Case1': ['tests.module.Case1.test1',
-                               'tests.module.Case1.test2'],
-        'tests.module.Case2': ['tests.module.Case2.test_method']
-    }
-
-    @self.mock(local_client._TestResultUpdater)
-    def initialize(updater_self):
-      updater_self.load_errors = self.load_errors
-      updater_self.test_unit_methods = self.test_unit_methods
-
-    @self.mock(local_client._TestResultUpdater)
-    def create_test_method(updater_self, fullname):
-      method = lambda test_case_self: None
-      method.fullname = fullname
-      return method
+    super(LoadTestModuleDataTest, self).setUp()
+    self.orig_stdout = sys.stdout
+    self.my_stdout = StringIO.StringIO()
+    sys.stdout = self.my_stdout
 
   def tearDown(self):
-    self.tear_down_attributes()
+    super(LoadTestModuleDataTest, self).tearDown()
+    sys.stdout = self.orig_stdout
 
-  def test_create_cases(self):
-    classes = local_client.create_test_cases('www.example.com',
-                                             unittest.TestCase, 'tests')
-    name1 = 'tests.module.Case1'
-    name2 = 'tests.module.Case2'
-    badname = 'tests.badmodule.' + local_client.MODULE_LOAD_ERROR_CLASS_NAME
-    badcase, case1, case2 = sorted(classes, key=lambda c: c.__name__)
+  def test_invalid_response_from_rest_api(self):
+    local_client._get_url_content = get_mock_get_url_content('[]')
+    self.assertRaises(local_client.RestApiError,
+                      local_client._load_test_module_data,
+                      'foo', self.comm, {}, {})
 
-    self.assertEqual(name1, case1.__name__)
-    self.assertEqual(name1 + '.test1', case1.test1.fullname)
-    self.assertEqual(name1 + '.test2', case1.test2.fullname)
+  def test_fullname_is_a_class(self):
+    local_client._get_url_content = get_mock_get_url_content('', 500)
+    self.assertRaises(local_client.RestApiError,
+                      local_client._load_test_module_data,
+                      'foo', self.comm, {}, {})
 
-    self.assertEqual(name2, case2.__name__)
-    self.assertEqual(name2 + '.test_method', case2.test_method.fullname)
+  def test_loaded_modules_are_stored(self):
+    test_objects = {}
+    load_tracebacks = {}
+    mod_name = 'package.module'
+    module_data_str = build_module_data_str(mod_name)
+    response = build_test_data_response([module_data_str], [])
+    local_client._get_url_content = get_mock_get_url_content(response)
+    mod_data, _ = local_client._load_test_module_data('foo', self.comm,
+                                                      test_objects,
+                                                      load_tracebacks)
+    self.assertEqual(1, len(mod_data))
+    self.assertTrue(mod_name in mod_data)
+    # The parent package is created and stored as well.
+    self.assertEqual(2, len(test_objects))
+    self.assertTrue(mod_name in test_objects)
 
-    self.assertEqual(badname, badcase.__name__)
-    method_name = local_client.MODULE_LOAD_ERROR_METHOD_NAME
-    self.assertTrue(hasattr(badcase, method_name))
+  def test_load_error_tracebacks_are_stored(self):
+    test_objects = {}
+    load_tracebacks = {}
+    mod_name = 'package.module'
+    load_traceback = 'a traceback string'
+    module_data_str = build_module_data_str(mod_name, load_error=True,
+                                              load_traceback=load_traceback)
+    response = build_test_data_response([module_data_str], [])
+    local_client._get_url_content = get_mock_get_url_content(response)
+    mod_data, _ = local_client._load_test_module_data('foo', self.comm,
+                                                      test_objects,
+                                                      load_tracebacks)
+    self.assertEqual(0, len(mod_data))
+    self.assertTrue(mod_name not in mod_data)
+    # No parent package is created and stored when a load error occured.
+    self.assertEqual(0, len(test_objects))
+    self.assertTrue(mod_name not in test_objects)
+    self.assertEqual(1, len(load_tracebacks))
+    self.assertTrue(mod_name in load_tracebacks)
+    self.assertEqual(load_tracebacks[mod_name], load_traceback)
 
-  def test_no_tests(self):
-    self.load_errors = {}
-    self.test_unit_methods = {}
-    classes = local_client.create_test_cases('www.example.com',
-                                             unittest.TestCase, 'tests')
-    self.assertEqual([], classes)
+  def test_multiple_modules_found(self):
+    test_objects = {}
+    load_tracebacks = {}
+    modules = {}
+    for name in ['package1.module1', 'package2.module1', 'package2.module2']:
+      modules[name] = build_module_data_str(name)
+    response = build_test_data_response(modules.values(), [])
+    local_client._get_url_content = get_mock_get_url_content(response)
+    mod_data, _ = local_client._load_test_module_data('foo', self.comm,
+                                                      test_objects,
+                                                      load_tracebacks)
+    self.assertEqual(3, len(mod_data))
+    for name in modules:
+      self.assertTrue(name in mod_data)
+    # The parent package is created and stored as well.
+    self.assertEqual(5, len(test_objects))
+    test_object_names = ['package1', 'package1.module1',
+                         'package2', 'package2.module1', 'package2.module2']
+    for name in test_object_names:
+      self.assertTrue(name in test_objects)
+
+  def test_modules_and_subpackages_are_returned(self):
+    expected_subpackages = ['sub1', 'sub2', 'sub3']
+    response = build_test_data_response([], expected_subpackages)
+    local_client._get_url_content = get_mock_get_url_content(response)
+    _, subpackages = local_client._load_test_module_data('foo', self.comm,
+                                                         {}, {})
+    self.assertEqual(len(expected_subpackages), len(subpackages))
+    for package in expected_subpackages:
+      self.assertTrue(package in subpackages)
+
+  def test_modules_could_not_be_loaded(self):
+    mocked_response = 'Could not load module "foo". Some error message.'
+    local_client._get_url_content = get_mock_get_url_content(mocked_response)
+    _, __ = local_client._load_test_module_data('foo', self.comm, {}, {})
+    self.assertTrue('Warning: Could not load module "foo"' in
+                    self.my_stdout.getvalue())
+    self.assertTrue('Some error message.' in
+                    self.my_stdout.getvalue())
+
+class LoadTestModuleTest(LoadTestObjectBase):
+  """Tests for _load_test_module."""
+
+  def setUp(self):
+    LoadTestObjectBase.setUp(self)
+    self.comm = local_client.AetaCommunicator('http://www.example.com')
+    self.base_class = unittest.TestCase
+    self.orig_load_test_module_data = local_client._load_test_module_data
+
+  def tearDown(self):
+    LoadTestObjectBase.tearDown(self)
+    local_client._load_test_module_data = self.orig_load_test_module_data
+
+  def test_no_modules_found(self):
+    test_objects = {}
+    load_tracebacks = {}
+    local_client._load_test_module_data = lambda f, c, t, l: ({}, {})
+    local_client._load_test_module('foo', self.base_class, self.comm,
+                                 test_objects, load_tracebacks)
+    self.assertEqual({}, test_objects)
+    self.assertEqual({}, load_tracebacks)
+
+  def test_classes_and_methods_correctly_loaded(self):
+    test_objects = {}
+    load_tracebacks = {}
+    mod_name = 'package.module'
+    tests = {'TestCase1': ['test_foo', 'test_bar'],
+             'TestCase2': ['test_foo', 'test_bar', 'test_baz'],
+            }
+    module_data_str = build_module_data_str(mod_name, tests)
+    response = build_test_data_response([module_data_str], {})
+    local_client._get_url_content = get_mock_get_url_content(response)
+    local_client._load_test_module('foo', self.base_class, self.comm,
+                                 test_objects, load_tracebacks)
+    self.assertEqual(9, len(test_objects))
+    for class_name, test_methods in tests.items():
+      for method_name in test_methods:
+        fullname = '%s.%s.%s' % (mod_name, class_name, method_name)
+        self.assertTrue(fullname in test_objects)
+
+
+class LoadTestClassTest(LoadTestObjectBase):
+  """Tests for _load_test_class."""
+
+  def setUp(self):
+    LoadTestObjectBase.setUp(self)
+    self.comm = local_client.AetaCommunicator('http://www.example.com')
+    self.base_class = unittest.TestCase
+    self.orig_load_test_module_data = local_client._load_test_module_data
+
+  def tearDown(self):
+    LoadTestObjectBase.tearDown(self)
+    local_client._load_test_module_data = self.orig_load_test_module_data
+
+  def test_module_has_not_been_loaded(self):
+    test_objects = {}
+    load_tracebacks = {}
+    mod_name = 'package.module'
+    class_name = 'TestCase'
+    fullname = '%s.%s' % (mod_name, class_name)
+    tests = {class_name: []}
+    module_data_str = build_module_data_str(mod_name, tests)
+    response = build_test_data_response([module_data_str], {})
+    local_client._get_url_content = get_mock_get_url_content(response)
+    local_client._load_test_class(fullname, self.base_class, self.comm,
+                                test_objects, load_tracebacks)
+    self.assertTrue(fullname in test_objects)
+    cls = test_objects[fullname]
+    self.assertTrue(issubclass(cls, self.base_class))
+
+  def test_module_has_already_been_loaded(self):
+    test_objects = {}
+    load_tracebacks = {}
+    mod_name = 'package.module'
+    class_name = 'TestCase'
+    fullname = '%s.%s' % (mod_name, class_name)
+    tests = {class_name: []}
+    module_data_str = build_module_data_str(mod_name, tests)
+    response = build_test_data_response([module_data_str], {})
+    local_client._get_url_content = get_mock_get_url_content(response)
+    # preload module
+    local_client._load_test_module_data(mod_name, self.comm, test_objects,
+                                        load_tracebacks)
+    # then load the test class
+    local_client._load_test_class(fullname, self.base_class, self.comm,
+                                test_objects, load_tracebacks)
+    self.assertTrue(fullname in test_objects)
+    cls = test_objects[fullname]
+    self.assertTrue(issubclass(cls, self.base_class))
+
+
+class LoadTestMethodTest(LoadTestObjectBase):
+  """Tests for _load_test_method."""
+
+  def setUp(self):
+    LoadTestObjectBase.setUp(self)
+    self.comm = local_client.AetaCommunicator('http://www.example.com')
+    self.base_class = unittest.TestCase
+    self.orig_load_test_module_data = local_client._load_test_module_data
+
+  def tearDown(self):
+    LoadTestObjectBase.tearDown(self)
+    local_client._load_test_module_data = self.orig_load_test_module_data
+
+  def test_basic_usage(self):
+    test_objects = {}
+    load_tracebacks = {}
+    mod_name = 'package.module'
+    class_name = 'TestCase'
+    method_name = 'test_foo'
+    fullname = '%s.%s.%s' % (mod_name, class_name, method_name)
+    tests = {mod_name: [method_name]}
+    module_data_str = build_module_data_str(mod_name, tests)
+    response = build_test_data_response([module_data_str], {})
+    local_client._get_url_content = get_mock_get_url_content(response)
+    local_client._load_test_method(fullname, self.base_class, self.comm,
+                                 test_objects, load_tracebacks)
+    self.assertTrue(fullname in test_objects)
+
+
+class CreateTestCasesTest(unittest.TestCase):
+  """Tests for create_test_casesTest."""
+
+  def setUp(self):
+    self.mod_name = 'module'
+    self.class_name = 'TestCase'
+    self.method_name = 'testFoo'
+    self.base_class = unittest.TestCase
+    self.mod = types.ModuleType(self.mod_name)
+    self.test_class = local_client._create_class(self.class_name,
+                                                self.base_class,
+                                                self.mod)
+    self.orig_get_test_type = local_client.AetaCommunicator.get_test_type
+    self.orig_load_test_module_data = local_client._load_test_module_data
+    self.orig_load_test_module = local_client._load_test_module
+    self.orig_load_test_class = local_client._load_test_class
+    self.orig_load_test_metho = local_client._load_test_method
+
+  def tearDown(self):
+    local_client.AetaCommunicator.get_test_type = self.orig_get_test_type
+    local_client._load_test_module_data = self.orig_load_test_module_data
+    local_client._load_test_module = self.orig_load_test_module
+    local_client._load_test_class = self.orig_load_test_class
+    local_client._load_test_method = self.orig_load_test_metho
+
+  def mock_get_test_type(self, response):
+    get_test_type = lambda elf_, testname: response
+    local_client.AetaCommunicator.get_test_type = get_test_type
+
+  def test_invalid_arguments(self):
+    for obj in [None, 0, [], {}]:
+      self.assertRaises(TypeError, local_client.create_test_cases, obj,
+                        self.base_class, None)
+    for obj in [None, 0, [], {}, '']:
+      self.assertRaises(TypeError, local_client.create_test_cases, 'string',
+                        obj, None)
+    for obj in [0, [], {}]:
+      self.assertRaises(TypeError, local_client.create_test_cases, 'string',
+                        self.base_class, obj)
+
+  def test_not_existing_test_object(self):
+    self.mock_get_test_type('')
+    self.assertRaises(local_client.RestApiError,
+                      local_client.create_test_cases,
+                      'url', self.base_class, 'some prefix')
+
+  def test_different_test_objects(self):
+    # Test that different loader functions are called for different
+    # test types and loaded test objects are returned.
+
+    # allow unused variables - pylint: disable-msg=W0613
+    def mock_load_test_object(prefix, cls, comm, test_objects, tracebacks):
+      test_objects[self.class_name] = self.test_class
+
+    type_function_mapping = {'package': '_load_test_module',
+                             'module': '_load_test_module',
+                             'class': '_load_test_class',
+                             'method': '_load_test_method',
+                            }
+
+    for test_type, func_name in type_function_mapping.items():
+      self.mock_get_test_type(test_type)
+      orig_func = getattr(local_client, func_name)
+      setattr(local_client, func_name, mock_load_test_object)
+      test_cases = local_client.create_test_cases('url', self.base_class,
+                                                'some.test.object')
+      self.assertTrue(self.test_class in test_cases)
+      setattr(local_client, func_name, orig_func)
+
+  def test_with_load_errors(self):
+
+    # allow unused variables - pylint: disable-msg=W0613
+    def mock_load_test_object(prefix, cls, comm, test_objects, tracebacks):
+      tracebacks[self.class_name] = self.test_class
+
+    self.mock_get_test_type('class')
+    setattr(local_client, '_load_test_class', mock_load_test_object)
+    test_cases = local_client.create_test_cases('url', self.base_class,
+                                                'some.test.object')
+    self.assertEqual(1, len(test_cases))
 
 
 class AddTestCasesToModuleTest(unittest.TestCase):
-  """Tests for add_test_cases_to_module."""
+  """Tests for add_test_cases_to_moduleTest."""
 
   def setUp(self):
     self.base_class = unittest.TestCase
@@ -633,9 +680,10 @@ class AddTestCasesToModuleTest(unittest.TestCase):
   def test_test_cases_are_added(self):
     test_mod = types.ModuleType('test_module')
     names = ['TestCase1', 'TestCase2', 'TestCase3']
+    parent_mod = types.ModuleType('parent_module')
     test_cases = []
     for name in names:
-      test_case = type(name, (self.base_class,), {})
+      test_case = local_client._create_class(name, self.base_class, parent_mod)
       test_cases.append(test_case)
     local_client.add_test_cases_to_module(test_cases, test_mod)
     for i, name in enumerate(names):
@@ -644,7 +692,9 @@ class AddTestCasesToModuleTest(unittest.TestCase):
 
   def test_attributes_already_exist(self):
     test_mod = types.ModuleType('test_module')
-    test_case = type('TestCase', (self.base_class,), {})
+    parent_mod = types.ModuleType('parent_module')
+    test_case = local_client._create_class('TestCase', self.base_class,
+                                           parent_mod)
     local_client.add_test_cases_to_module([test_case], test_mod)
     self.assertRaises(ValueError, local_client.add_test_cases_to_module,
                       [test_case], test_mod)

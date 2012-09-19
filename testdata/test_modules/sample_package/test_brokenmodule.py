@@ -1,4 +1,4 @@
-# Copyright 2012 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,6 @@
 
 """This module should cause an import error when imported."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import non_existing_package

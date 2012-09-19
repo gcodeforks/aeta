@@ -1,0 +1,30 @@
+Metadata-Version: 1.0
+Name: gaedriver
+Version: 0.1.0
+Summary: A tool for end-to-end testing of App Engine apps.
+Home-page: http://code.google.com/p/gaedriver
+Author: Robert Schuppenies
+Author-email: schuppe@google.com
+License: Apache License 2.0
+Description: gaedriver is a tool to automate end-to-end test for App Engine apps.
+        
+        
+        MOTIVATION
+        ==========
+        Before you can run an end-to-end test, you need to bring up your test
+        environment. For App Engine apps, this means starting dev_appserver or
+        deploying an application. The gaedriver package allows you to do those
+        things with an API.
+        
+        
+        Current status
+        ==============
+        
+        alpha - We understand what's needed and know how to solve it. Looking for more
+        testers to provide feedback on the APIs and usage in general.
+        
+        
+        A Python Tutorial can be found at
+        http://code.google.com/p/gaedriver/wiki/PythonTutorial.
+        
+Platform: any

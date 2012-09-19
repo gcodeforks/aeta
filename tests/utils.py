@@ -1,4 +1,4 @@
-# Copyright 2012 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,15 +14,10 @@
 
 """Test utilities."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 import os
 import sys
-
-try:
-  import json
-except ImportError:
-  import simplejson as json
 
 TEST_PACKAGE_ROOT = os.path.join('testdata', 'test_modules')
 
@@ -48,8 +43,16 @@ class TestDataMixin(object):
 class HandlerTestMixin(object):
   """Mixin for easier handler testing."""
 
-  def check_response(self, response, expected_content,
-                     exact=True, is_json=False):
+  # a method is fine - pylint:disable-msg=R0201
+  def get_response_code(self, response):
+    """Get the response code."""
+    if os.environ.get('APPENGINE_RUNTIME') == 'python27':
+      return response.status_int
+    else:
+      return response.status
+
+  def check_response(self, response, expected_status, expected_content,
+                     exact=True):
     """Check a response.
 
     Args:
@@ -57,98 +60,15 @@ class HandlerTestMixin(object):
       expected_status: The expected status code.
       expected_content: The expected content in the response.
       exact: True, if content should match exactly.
-      is_json: True, if the expected_content is a JSON object that the response
-          should be compared to.
     """
-    if hasattr(response, 'body'):
-      result_out = response.body
+    if os.environ.get('APPENGINE_RUNTIME') == 'python27':
+      result_out = self.handler.response.body
+      self.assertTrue(result_out.find(expected_content) > -1, result_out)
     else:
-      response.out.seek(0)
-      result_out = response.out.read()
-    if exact:
-      if is_json:
-        result_out = json.loads(result_out)
-      # Convert expected_content to JSON and back to handle unicode.
-      self.assertEqual(json.loads(json.dumps(expected_content)), result_out)
-    else:
-      self.assertTrue(result_out.find(expected_content) > -1)
-
-
-class MockAttributeMixin(object):
-  """Used to mock object attributes.
-
-  Usage:
-
-    class SomeTestCase(unittest.TestCase, utils.MockAttributeMixin):
-
-      def setUp(self):
-        # Mock deferred.defer
-        @self.mock(deferred)
-        def defer(func, *args, **kwargs):
-          ...
-
-        # Mock config.get_config
-        @self.mock(config)
-        def get_config():
-          ...
-
-      def tearDown(self):
-        self.tear_down_attributes()
-    """
-
-  def mock(self, obj, attr_name=None):
-    """Mocks an attribute of an object.
-
-    This will set the given attribute of the object to the value passed in and
-    save the original value of the attribute.  The original value will be
-    restored when tear_down_attributes() is called.
-
-    This function has 2 usage patterns:
-
-    To mock functions, methods, or classes:
-
-    @self.mock(object_containing_attribute)
-    def function_name(arguments):  # alternatively: class class_name
-      ...
-
-    To mock other objects:
-    self.mock(object_containing_attribute, 'attribute_name')(new_value)
-
-    Args:
-      obj: The object whose attribute should be mocked.  This is usually a
-          module or class but may be any object with mutable attributes.
-      attr_name: The name of the attribute.  This is only required if the new
-          attribute value does not have __name__ defined.
-
-    Returns:
-      A wrapper function for the mock value.
-    """
-
-    def wrapper(new_value):
-      """Wrapper for the new attribute value.
-
-      Args:
-        new_value: The mock value that the attribute will be set to for the
-            duration of the test.
-      """
-      name = attr_name or new_value.__name__
-      old_value = getattr(obj, name)
-      if not hasattr(self, 'old_mock_attributes'):
-        self.old_mock_attributes = []
-      self.old_mock_attributes.append((obj, name, old_value))
-      setattr(obj, name, new_value)
-    return wrapper
-
-  def tear_down_attributes(self):
-    """Restores all mocked objects' attributes to their original values.
-
-    This should be called in tearDown().
-    """
-    # Treat old_mock_attributes as a stack to handle cases where the same
-    # property is mocked twice.
-    while getattr(self, 'old_mock_attributes', False):
-      (obj, name, old_value) = self.old_mock_attributes.pop()
-      setattr(obj, name, old_value)
-
-
-
+      self.handler.response.out.seek(0)
+      result_out = self.handler.response.out.read()
+      if exact:
+        self.assertEqual(expected_content, result_out)
+      else:
+        self.assertTrue(result_out.find(expected_content) > -1)
+    self.assertEqual(expected_status, self.get_response_code(response))

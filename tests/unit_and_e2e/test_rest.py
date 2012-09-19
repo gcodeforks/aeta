@@ -1,4 +1,4 @@
-# Copyright 2012 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Unit tests for the rest module of aeta."""
 
-
+__author__ = 'schuppe@google.com (Robert Schuppenies)'
 
 # Disable checking; pylint:disable-msg=C0111,W0212,R0904,C0103
 # - docstrings
@@ -22,304 +22,288 @@
 # - too many public methods
 # - setUp() and tearDown() method names
 
-import copy
 import unittest
 
-from google.appengine.ext import ndb
-from google.appengine.ext import testbed
-from google.appengine.ext import webapp
-import webtest
-
-try:
-  import json
-except ImportError:
-  import simplejson as json
+import simplejson as json
 
 from aeta import config
+from aeta import logic
 from aeta import models
 from aeta import rest
-from aeta import runner
 from tests import utils
 
+utils.TestDataMixin().setup_test_data()
 
-class GetBatchResultsTest(unittest.TestCase, utils.MockAttributeMixin):
-  """Tests for get_batch_results."""
+# special test data setup - pylint:disable-msg=F0401
+import sample_package
+from sample_package import test_one_testcase
+
+SAMPLE_PACKAGENAME = sample_package.__name__
+SAMPLE_SUBPACKAGENAME = '%s.subpackage' % SAMPLE_PACKAGENAME
+SAMPLE_MODULENAME = test_one_testcase.__name__
+SAMPLE_CLASSNAME = '%s.%s' % (SAMPLE_MODULENAME, 'SimpleTestCase')
+SAMPLE_METHODNAME = '%s.%s' % (SAMPLE_CLASSNAME, 'test_pass')
+
+
+class ConvertModuleDataTest(unittest.TestCase):
+  """Tests for the convert_module_data function."""
 
   def setUp(self):
-    self.batch = None
-    self.testbed = testbed.Testbed()
-    self.testbed.activate()
-    self.testbed.init_memcache_stub()
-    self.testbed.init_datastore_v3_stub()
-    self.config = copy.copy(config.get_config())
+    self.modtests = {'testcase1': ['testMethod1', 'testMethod2']}
+    self.moddata = models.ModuleData(fullname='package.module',
+                                     tests=self.modtests,
+                                     load_error=False,
+                                     load_traceback=None)
+
+  def test_invalid_input(self):
+    self.assertRaises(TypeError, rest.convert_module_data, None)
+    self.assertRaises(TypeError, rest.convert_module_data, '')
+    self.assertRaises(TypeError, rest.convert_module_data, 5)
+
+  def test_valid_input(self):
+    json_string = rest.convert_module_data(self.moddata)
+    self.assertTrue(isinstance(json_string, str))
+
+  def test_output_validity_without_load_error(self):
+    json_string = rest.convert_module_data(self.moddata)
+    values = json.loads(json_string)
+    keys = ['tests', 'fullname', 'load_error', 'load_traceback']
+    for key in keys:
+      self.assertEqual(getattr(self.moddata, key), values[key])
+
+  def test_output_validity_with_load_error(self):
+    self.moddata.load_error = True
+    self.moddata.load_traceback = 'some traceback string'
+    json_string = rest.convert_module_data(self.moddata)
+    values = json.loads(json_string)
+    keys = ['tests', 'fullname', 'load_error', 'load_traceback']
+    for key in keys:
+      self.assertEqual(getattr(self.moddata, key), values[key])
+
+
+class GetSubpackagesTest(unittest.TestCase):
+  """Tests for the get_subpackages function."""
+
+  def test_invalid_input(self):
+    self.assertRaises(TypeError, rest.get_subpackages, None)
+    self.assertRaises(TypeError, rest.get_subpackages, 5)
+    self.assertRaises(TypeError, rest.get_subpackages, [''])
+
+  def test_package_with_one_subpackage(self):
+    subpackages = rest.get_subpackages(SAMPLE_PACKAGENAME)
+    self.assertTrue(isinstance(subpackages, list))
+    self.assertEqual(['subpackage'], subpackages)
+
+  def test_package_with_no_subpackage(self):
+    subpackages = rest.get_subpackages(SAMPLE_SUBPACKAGENAME)
+    self.assertEqual([], subpackages)
+
+  def test_module(self):
+    subpackages = rest.get_subpackages(SAMPLE_MODULENAME)
+    self.assertEqual([], subpackages)
+
+
+class JsonizeModuleInformationTest(unittest.TestCase):
+  """Tests for the jsonize_module_information function."""
+
+  def setUp(self):
+    self.moddata = models.ModuleData(fullname='package.module',
+                                     tests=['testFoo', 'testBar'],
+                                     load_error=False,
+                                     load_traceback=None)
+
+  # method, not a function is okay - pylint:disable-msg=R0201
+  def get_expected_output(self, jsonized_moddata, jsonized_subpackages):
+    return '{"subpackages": %s, "module_data": %s}' % (jsonized_subpackages,
+                                                       jsonized_moddata)
+
+  def test_invalid_input(self):
+    self.assertRaises(TypeError, rest.jsonize_module_information, None, [])
+    self.assertRaises(TypeError, rest.jsonize_module_information, 1, [])
+    self.assertRaises(TypeError, rest.jsonize_module_information, '', [])
+    self.assertRaises(TypeError, rest.jsonize_module_information,
+                      self.moddata, [])
+    self.assertRaises(TypeError, rest.jsonize_module_information, [], 1)
+    self.assertRaises(TypeError, rest.jsonize_module_information, [], '')
+
+  def test_empty_lists(self):
+    jsonized_moddata = []
+    jsonized_subpackages = []
+    result = rest.jsonize_module_information(jsonized_moddata,
+                                           jsonized_subpackages)
+    expected = self.get_expected_output(jsonized_moddata, jsonized_subpackages)
+    self.assertEqual(expected, result)
+
+  def test_output_is_valid_json(self):
+    jsonized_subpackages = []
+    result = rest.jsonize_module_information([self.moddata],
+                                           jsonized_subpackages)
+    values = json.loads(result)
+    self.assertEqual([], values['subpackages'])
+    self.assertTrue('module_data' in values)
+    moddata = values['module_data'][0]
+    keys = ['tests', 'fullname', 'load_error', 'load_traceback']
+    for key in keys:
+      self.assertEqual(getattr(self.moddata, key), moddata[key])
+
+
+class GetModuleDataTest(unittest.TestCase):
+  """Tests for the get_module_data function."""
+
+  def setUp(self):
+    self.orig_getsubpackages = rest.get_subpackages
+    self.expected_subpackages = ['foo', 'bar']
+    rest.get_subpackages = lambda _: self.expected_subpackages
+    self.conf = config.Config(test_package_names=['tests'],
+                              test_module_pattern='^test_[\w]+$')
+    self.orig_testnames = self.conf.test_package_names
+    self.orig_getabspath = logic.get_abs_path_from_package_name
+
 
   def tearDown(self):
-    self.testbed.deactivate()
-    self.tear_down_attributes()
+    rest.get_subpackages = self.orig_getsubpackages
+    self.conf.test_package_names = self.orig_testnames
+    logic.get_abs_path_from_package_name = self.orig_getabspath
 
-  def make_tasks(self, finished_indexes):
-    self.batch.put()
-    for i in range(self.batch.num_units):
-      task = models.RunTestUnitTask(fullname='test%s' % i)
-      task.key = models.RunTestUnitTask.get_key(self.batch.key, i)
-      if i in finished_indexes:
-        task.set_json({'index': i}, self.config)
-      task.put()
+  def test_invalid_input(self):
+    self.assertRaises(TypeError, rest.get_module_data, None, self.conf)
+    self.assertRaises(TypeError, rest.get_module_data, 5, self.conf)
+    self.assertRaises(TypeError, rest.get_module_data, [''], self.conf)
 
-  def test_first(self):
-    self.batch = models.TestBatch(fullname='some.module', num_units=10)
-    self.make_tasks([0, 1, 2, 4, 5, 7])
-    results = rest.get_batch_results(self.batch, 0)
-    self.assertEqual([{'index': 0}, {'index': 1}, {'index': 2}], results)
+  def test_empty_name(self):
+    self.conf.test_package_names = self.expected_subpackages
+    logic.get_abs_path_from_package_name = lambda _: self.expected_subpackages
+    (subpackages, moduledata) = rest.get_module_data('', self.conf)
+    self.assertEqual(self.expected_subpackages, subpackages)
+    self.assertEqual([], moduledata)
 
-  def test_middle(self):
-    self.batch = models.TestBatch(fullname='some.module', num_units=10)
-    self.make_tasks([0, 1, 2, 3, 4, 6])
-    results = rest.get_batch_results(self.batch, 2)
-    self.assertEqual([{'index': 2}, {'index': 3}, {'index': 4}], results)
+  def test_existing_package(self):
+    fullname = SAMPLE_PACKAGENAME
+    (subpackages, moduledata) = rest.get_module_data(fullname, self.conf)
+    self.assertEqual(self.expected_subpackages, subpackages)
+    self.assertTrue(isinstance(moduledata, list))
+    self.assertTrue(isinstance(moduledata[0], models.ModuleData))
 
-  def test_no_new(self):
-    self.batch = models.TestBatch(fullname='some.module', num_units=10)
-    self.make_tasks([0, 1, 2, 4, 5, 7])
-    results = rest.get_batch_results(self.batch, 3)
-    self.assertEqual([], results)
+  def test_non_existing_package(self):
+    fullname = SAMPLE_PACKAGENAME + 'non_existing'
+    self.assertRaises(rest.LoadError, rest.get_module_data, fullname,
+                      self.conf)
 
-  def test_last(self):
-    self.batch = models.TestBatch(fullname='some.module', num_units=5)
-    self.make_tasks([0, 1, 2, 3, 4])
-    results = rest.get_batch_results(self.batch, 3)
-    self.assertEqual([{'index': 3}, {'index': 4}], results)
+  def test_existing_module(self):
+    (subpackages, moduledata) = rest.get_module_data(SAMPLE_MODULENAME,
+                                                     self.conf)
+    self.assertEqual([], subpackages)
+    self.assertTrue(isinstance(moduledata, list))
+    self.assertTrue(isinstance(moduledata[0], models.ModuleData))
 
+  def test_non_existing_module(self):
+    self.assertRaises(rest.LoadError, rest.get_module_data,
+                      SAMPLE_PACKAGENAME + '.non_exising', self.conf)
 
-# self.handler has to be initialized by child class -
-# pylint:disable-msg=E1101
-class HandlerTestBase(unittest.TestCase, utils.HandlerTestMixin,
-                      utils.MockAttributeMixin, utils.TestDataMixin):
-  """Base class for handler tests.
+  def test_class(self):
+    self.assertRaises(rest.IncorrectUsageError, rest.get_module_data,
+                      SAMPLE_CLASSNAME, self.conf)
 
-  When using this base class, set 'self.handler' first. then invoke
-  the base setUp method.
-  """
-
-  def setUp(self):
-    self.url_path = '/tests/'
-    app = webapp.WSGIApplication(rest.get_handler_mapping(self.url_path))
-    self.app = webtest.TestApp(app)
-    self.setup_test_data()
-    self.config = copy.copy(config.get_config())
-    self.config.test_package_names = [self.test_package_name]
-
-    @self.mock(config)
-    def get_config():
-      return self.config
-
-  def tearDown(self):
-    self.tear_down_test_data()
-    self.tear_down_attributes()
-
-  def check_response_text_not_expected(self, response, not_expected_output):
-    self.assertNotEqual(not_expected_output, response.body)
-
-
-class GetMethodsRequestHandlerTest(HandlerTestBase):
-  """Tests for the GetMethodsRequestHandler class."""
-
-  def setUp(self):
-    HandlerTestBase.setUp(self)
-    self.handler_path = self.url_path + 'get_methods/'
-    self.setup_test_data()
-
-  def test_success(self):
-    fullname = 'sample_package.test_one_testcase'
-    resp = self.app.get(self.handler_path + fullname, status=200)
-    exp_resp = {'method_names': [fullname + '.SimpleTestCase.test_fail',
-                                 fullname + '.SimpleTestCase.test_pass'],
-                'load_errors': []}
-    self.check_response(resp, exp_resp, is_json=True)
-
-  def test_invalid_name(self):
-    fullname = 'does.not.exist'
-    resp = self.app.get(self.handler_path + fullname, status=200)
-    resp_json = json.loads(resp.body)
-    self.assertEqual([], resp_json['method_names'])
-    self.assertEqual(1, len(resp_json['load_errors']))
-    self.assertEqual('does.not.exist', resp_json['load_errors'][0][0])
+  def test_method(self):
+    self.assertRaises(rest.IncorrectUsageError, rest.get_module_data,
+                      SAMPLE_METHODNAME, self.conf)
 
   def test_load_error(self):
-    fullname = 'sample_package.test_brokenmodule'
-    resp = self.app.get(self.handler_path + fullname, status=200)
-    resp_json = json.loads(resp.body)
-    self.assertEqual([], resp_json['method_names'])
-    self.assertEqual(1, len(resp_json['load_errors']))
-    self.assertEqual('sample_package.test_brokenmodule',
-                     resp_json['load_errors'][0][0])
+    fullname = '%s.test_brokenmodule' % SAMPLE_PACKAGENAME
+    self.assertRaises(rest.LoadError, rest.get_module_data, fullname,
+                      self.conf)
 
 
-class StartBatchRequestHandlerTest(HandlerTestBase):
-  """Tests for the StartBatchRequestHandler class."""
+class GetTestResultDataTest(unittest.TestCase):
+  """Tests for the get_test_result_data function."""
 
   def setUp(self):
-    HandlerTestBase.setUp(self)
-    self.handler_path = self.url_path + 'start_batch/'
-    self.batch_id = 1234
-    self.fullname = None
-    self.config = copy.copy(config.get_config())
-    self.config.storage = 'datastore'
-    self.mock(config, 'get_config')(lambda: self.config)
-
-    @self.mock(runner)
-    def start_batch(fullname, conf):
-      self.assertEqual(self.fullname, fullname)
-      self.assertEqual(self.config, conf)
-      key = ndb.Key(models.TestBatch, self.batch_id)
-      return models.TestBatch(fullname=fullname, key=key)
-
-  def test_success(self):
-    self.fullname = 'sample_package.test_goodmodule'
-    resp = self.app.post(self.handler_path + self.fullname, status=200)
-    self.check_response(resp, {'batch_id': str(self.batch_id)}, is_json=True)
-
-  def test_run_everything(self):
-    self.fullname = ''
-    resp = self.app.post(self.handler_path, status=200)
-    self.check_response(resp, {'batch_id': str(self.batch_id)}, is_json=True)
-
-  def test_invalid_name(self):
-    self.fullname = 'does.not.exist'
-    resp = self.app.post(self.handler_path + self.fullname, status=404)
-    self.check_response_text_not_expected(resp, '')
-
-  def test_load_error(self):
-    self.fullname = 'sample_package.test_brokenmodule'
-    resp = self.app.post(self.handler_path + self.fullname, status=500)
-    self.check_response_text_not_expected(resp, '')
-
-  def test_immediate(self):
-    self.fullname = 'sample_package'
-    self.config.storage = 'immediate'
-    load_errors = [('sample_package.badmodule', 'ImportError')]
-    test_unit_methods = {'sample_package.goodmodule':
-                         ['sample_package.goodmodule.Class.method']}
-
-    @self.mock(runner)
-    def start_batch(fullname, conf):
-      self.assertEqual(self.fullname, fullname)
-      self.assertEqual(self.config, conf)
-      key = ndb.Key(models.TestBatch, self.batch_id)
-      batch = models.TestBatch(fullname=fullname, key=key, num_units=1)
-      ctx_options = models.get_ctx_options(conf)
-      batch.put(**ctx_options)
-      batch.set_info(load_errors, test_unit_methods, conf)
-      batch.put(**ctx_options)
-      task_key = models.RunTestUnitTask.get_key(batch.key, 0)
-      task = models.RunTestUnitTask(key=task_key,
-                                    fullname='sample_package.goodmodule')
-      task.put(**ctx_options)
-      # Fake result JSON rather than from set_test_result().
-      task.set_json({'result': 'passed'}, conf)
-      task.put(**ctx_options)
-      return batch
-
-    resp = self.app.post(self.handler_path + self.fullname, status=200)
-    self.check_response(resp, {
-        'batch_info': {'load_errors': load_errors,
-                       'num_units': 1,
-                       'test_unit_methods': test_unit_methods},
-        'results': [{'result': 'passed'}]
-        }, is_json=True)
-
-
-class BatchInfoRequestHandlerTest(HandlerTestBase):
-  """Tests for the BatchInfoRequestHandler class."""
-
-  def setUp(self):
-    self.handler = rest.BatchInfoRequestHandler()
-    HandlerTestBase.setUp(self)
-    self.handler_path = self.url_path + 'batch_info/'
-    self.testbed = testbed.Testbed()
-    self.testbed.activate()
-    self.testbed.init_memcache_stub()
-    self.testbed.init_datastore_v3_stub()
-    self.config = copy.copy(config.get_config())
+    test_result = unittest.TestResult()
+    result_name = 'package.module.testcase1'
+    self.testresult = models.TestResultData(testresult=test_result,
+                                            fullname=result_name)
+    self.orig_runtest = logic.run_test
+    logic.run_test = lambda _: self.testresult
+    self.orig_loadmodules = logic.load_modules
+    self.conf = config.Config(test_package_names=['foo', 'bar'],
+                              test_module_pattern='^test_[\w]+$')
 
   def tearDown(self):
-    self.testbed.deactivate()
-    HandlerTestBase.tearDown(self)
+    logic.run_test = self.orig_runtest
+    logic.load_modules = self.orig_loadmodules
 
-  def test_batch_info(self):
-    batch = models.TestBatch(fullname='tests', num_units=5)
-    batch.key = ndb.Key(models.TestBatch, 'batchid')
-    batch.put()
-    load_errors = [('tests.badmodule', 'ImportError')]
-    test_unit_methods = {'tests': ['tests.module.TestCase.method']}
-    batch.set_info(load_errors, test_unit_methods, self.config)
-    batch.put()
-    resp = self.app.get(self.handler_path + 'batchid', status=200)
-    self.check_response(resp,
-                        {'num_units': 5,
-                         'test_unit_methods': test_unit_methods,
-                         'load_errors': load_errors},
-                        is_json=True)
+  def test_invalid_input(self):
+    self.assertRaises(TypeError, rest.get_test_result_data, None, self.conf)
+    self.assertRaises(TypeError, rest.get_test_result_data, 5, self.conf)
+    self.assertRaises(TypeError, rest.get_test_result_data, [''], self.conf)
 
-  def test_bad_id(self):
-    resp = self.app.get(self.handler_path + '111', status=404)
-    self.check_response_text_not_expected(resp, '')
+  def test_empty_name(self):
+
+    # okay to define instance variable - pylint:disable-msg=W0201
+    self.testnames = []
+
+    def register_test_names(name):
+      self.testnames.append(name)
+      return self.testresult
+
+    logic.run_test = register_test_names
+    logic.load_modules = lambda *args, **kwargs: 'foo'
+    results = rest.get_test_result_data('', self.conf)
+    self.assertTrue(len(self.testnames) > len(self.conf.test_package_names))
+    self.assertTrue(results)
+    for result in results:
+      self.assertTrue(isinstance(result, models.TestResultData))
+
+  def test_existing_package(self):
+    results = rest.get_test_result_data(SAMPLE_PACKAGENAME, self.conf)
+    self.assertTrue(results)
+    for result in results:
+      self.assertTrue(isinstance(result, models.TestResultData))
+
+  def test_module(self):
+    results = rest.get_test_result_data(SAMPLE_MODULENAME, self.conf)
+    self.assertTrue(results)
+    for result in results:
+      self.assertTrue(isinstance(result, models.TestResultData))
+
+  def test_class(self):
+    results = rest.get_test_result_data(SAMPLE_CLASSNAME, self.conf)
+    self.assertTrue(results)
+    for result in results:
+      self.assertTrue(isinstance(result, models.TestResultData))
+
+  def test_method(self):
+    results = rest.get_test_result_data(SAMPLE_METHODNAME, self.conf)
+    self.assertTrue(results)
+    for result in results:
+      self.assertTrue(isinstance(result, models.TestResultData))
+
+  def test_non_existing_test_object(self):
+    self.assertRaises(rest.ObjectNotFoundError, rest.get_test_result_data,
+                      'non-existing-name', self.conf)
 
 
-class BatchResultsRequestHandlerTest(HandlerTestBase):
-  """Tests for the BatchResultsRequestHandler class."""
+class GetObjectTypeTest(unittest.TestCase):
+  """Tests for the get_object_type function."""
 
-  def setUp(self):
-    self.handler = rest.BatchResultsRequestHandler()
-    HandlerTestBase.setUp(self)
-    self.handler_path = self.url_path + 'batch_results/'
-    self.testbed = testbed.Testbed()
-    self.testbed.activate()
-    self.testbed.init_memcache_stub()
-    self.testbed.init_datastore_v3_stub()
+  def test_invalid_input(self):
+    self.assertRaises(TypeError, rest.get_object_type, 5)
+    self.assertRaises(TypeError, rest.get_object_type, [''])
 
-  def tearDown(self):
-    self.testbed.deactivate()
-    HandlerTestBase.tearDown(self)
+  def test_package(self):
+    self.assertEqual('package', rest.get_object_type(SAMPLE_PACKAGENAME))
 
-  def test_batch_results(self):
-    batch = models.TestBatch(fullname='tests', num_units=5)
-    batch.key = ndb.Key(models.TestBatch, 'batchid')
-    batch.put()
+  def test_module(self):
+    self.assertEqual('module', rest.get_object_type(SAMPLE_MODULENAME))
 
-    @self.mock(rest)
-    def get_batch_results(bat, start):
-      self.assertEqual(batch, bat)
-      self.assertEqual(3, start)
-      return ['result1', 'result2']
-    resp = self.app.get('%s%s?start=3' % (self.handler_path, 'batchid'),
-                        status=200)
-    self.check_response(resp, ['result1', 'result2'], is_json=True)
+  def test_class(self):
+    self.assertEqual('class', rest.get_object_type(SAMPLE_CLASSNAME))
 
-  def test_bad_id(self):
-    resp = self.app.get(self.handler_path + '111?start=3', status=404)
-    self.check_response_text_not_expected(resp, '')
+  def test_method(self):
+    self.assertEqual('method', rest.get_object_type(SAMPLE_METHODNAME))
 
-  def test_start_not_integer(self):
-    batch = models.TestBatch(fullname='tests', num_units=5)
-    batch.key = ndb.Key(models.TestBatch, 'batchid')
-    batch.put()
-    resp = self.app.get('%s%s?start=notaninteger' %
-                        (self.handler_path, 'batchid'), status=400)
-    self.check_response_text_not_expected(resp, '')
+  def test_empty_name(self):
+    self.assertEqual('', rest.get_object_type(''))
 
-  def test_start_negative(self):
-    batch = models.TestBatch(fullname='tests', num_units=5)
-    batch.key = ndb.Key(models.TestBatch, 'batchid')
-    batch.put()
-    resp = self.app.get('%s%s?start=-5' % (self.handler_path, 'batchid'),
-                        status=400)
-    self.check_response_text_not_expected(resp, '')
-
-  def test_start_too_high(self):
-    batch = models.TestBatch(fullname='tests', num_units=5)
-    batch.key = ndb.Key(models.TestBatch, 'batchid')
-    batch.put()
-    resp = self.app.get('%s%s?start=5' % (self.handler_path, 'batchid'),
-                        status=400)
-    self.check_response_text_not_expected(resp, '')
+  def test_non_existing_object(self):
+    self.assertEqual('', rest.get_object_type('foo.bar.baz'))
