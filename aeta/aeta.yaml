@@ -9,11 +9,6 @@ test_module_pattern: ^[\w]+_test$
 # URL path to the web interface of aeta.
 url_path: /tests/
 
-# Whether to use appstats to record aeta test performance.  If this is True,
-# stats are avalilable at <aeta url path>/stats/details.  Should be turned
-# off if appstats is on for the application as a whole.
-use_appstats: false
-
 # Run multiple modules in parallel?  This is true by default because each
 # module might take a long time to run, so it is possible to save time by
 # parallelizing them.

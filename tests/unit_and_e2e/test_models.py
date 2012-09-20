@@ -60,8 +60,6 @@ class JsonHolderTest(unittest.TestCase, utils.MockAttributeMixin):
       self.cleaned_up = True
 
   def tearDown(self):
-    if self.holder.blob_key:
-      blobstore.delete(self.holder.blob_key)
     self.testbed.deactivate()
     self.tear_down_attributes()
 

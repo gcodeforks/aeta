@@ -51,7 +51,6 @@ class Config(object):
   SET_OPTIONS = ['test_package_names',
                  'test_module_pattern',
                  'url_path',
-                 'use_appstats',
                  'parallelize_modules',
                  'parallelize_classes',
                  'parallelize_methods',

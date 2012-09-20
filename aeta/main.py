@@ -20,8 +20,6 @@ import os.path
 
 from google.appengine.api import users
 from google.appengine.ext import webapp
-from google.appengine.ext.appstats import recording
-from google.appengine.ext.appstats import ui
 from google.appengine.ext.webapp import util
 
 from aeta import config
@@ -38,9 +36,6 @@ def get_url_mapping():
                  ]
   url_mapping.extend(rest.get_handler_mapping(conf.url_path_rest))
   url_mapping.append((conf.url_path_deferred, task_deferred.DeferredHandler))
-  if conf.use_appstats:
-    url_mapping.extend([(os.path.join(conf.url_path, 'stats', path), handler)
-                        for (path, handler) in ui.URLMAP])
   # config attributes dynamically assigned - pylint:disable-msg=E1101
   url_mapping.append((conf.url_path + '(.*)', handlers.DefaultRequestHandler))
   return url_mapping
@@ -111,12 +106,6 @@ class AuthWsgiMiddleware(object):
 
 # The app object is used in a Python 2.7 runtime.
 APP = AuthWsgiMiddleware(webapp.WSGIApplication(get_url_mapping()))
-
-if config.get_config().use_appstats:
-  # Add appstats, with better stack traces.  This is awkward because the config
-  # should be in appengine_config.py, which we do not have access to.
-  recording.config.MAX_STACK = 30
-  APP = recording.appstats_wsgi_middleware(APP)
 
 # In a Python 2.5 environment, run this as a CGI script.
 if __name__ == '__main__':

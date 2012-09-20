@@ -30,7 +30,6 @@ from aeta import config
 SET_CONFIG_OPTIONS = {'test_package_names': 'tests1, tests2',
                       'test_module_pattern': '^[\w]+_test$',
                       'url_path': '/tests/',
-                      'use_appstats': False,
                       }
 
 class ConfigTest(unittest.TestCase):
@@ -125,7 +124,6 @@ class LoadConfigTest(unittest.TestCase):
         'test_module_pattern': '^[\w]+_test$',
         # MOE:end_strip_and_replace 'test_module_pattern': '^test_[\w]+$',
         'url_path': '/tests/',
-        'use_appstats': False,
         'url_path': '/tests/',
         'parallelize_modules': True,
         'parallelize_classes': False,
