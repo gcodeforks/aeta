@@ -47,3 +47,5 @@ for app in testdata/e2e_{25,27}_app; do
   ln -snf `pwd`/tests/utils.py $app/tests/utils.py
 done
 ln -snf `pwd`/aeta demo/aeta
+
+export DID_INIT_DEV_ENV=true

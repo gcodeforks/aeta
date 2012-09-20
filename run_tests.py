@@ -68,6 +68,9 @@ def run_e2e_tests(sdk_dir):
 
 
 def main(test_size, sdk_dir=None):
+  if not os.getenv('DID_INIT_DEV_ENV'):
+    print 'You must run "source init-dev-env.sh" first.'
+    sys.exit(1)
   if test_size == 'unit':
     run_unit_tests()
   elif test_size == 'e2e':
