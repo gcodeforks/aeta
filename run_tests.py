@@ -67,8 +67,9 @@ def run_e2e_tests(sdk_dir):
     gaedriver.teardown_app(config, app_token)
 
 
-def main(test_size, sdk_dir=None):
-  if not os.getenv('DID_INIT_DEV_ENV'):
+def main(test_size):
+  sdk_dir = os.getenv('AETA_SDK_DIR')
+  if not sdk_dir:
     print 'You must run "source init-dev-env.sh" first.'
     sys.exit(1)
   if test_size == 'unit':
@@ -85,12 +86,10 @@ def main(test_size, sdk_dir=None):
 
 if __name__ == '__main__':
   PARSER = optparse.OptionParser(USAGE)
-  PARSER.add_option('-s', '--sdk_dir', dest='sdk_dir', default=None,
-                    help='Directory of the App Engine SDK')
   OPTIONS, ARGS = PARSER.parse_args()
   if len(ARGS) != 1:
     print 'Error: Exactly 1 arguments required.'
     PARSER.print_help()
     sys.exit(1)
   TEST_SIZE = ARGS[0]
-  main(TEST_SIZE, sdk_dir=OPTIONS.sdk_dir)
+  main(TEST_SIZE)

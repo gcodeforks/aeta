@@ -13,6 +13,7 @@
 # limitations under the License.
 
 *.pyc
+*.swp
 
 # Ignore symbolic links created in init-dev-env.sh
 demo/aeta

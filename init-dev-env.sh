@@ -48,4 +48,4 @@ for app in testdata/e2e_{25,27}_app; do
 done
 ln -snf `pwd`/aeta demo/aeta
 
-export DID_INIT_DEV_ENV=true
+export AETA_SDK_DIR=$1
