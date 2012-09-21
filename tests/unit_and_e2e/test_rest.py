@@ -256,7 +256,7 @@ class BatchInfoRequestHandlerTest(HandlerTestBase):
     batch.put()
     resp = self.app.get(self.handler_path + 'batchid', status=200)
     self.check_response(resp,
-                        {'num_units': 5,
+                        {'num_units': 1,
                          'test_unit_methods': test_unit_methods,
                          'load_errors': load_errors},
                         is_json=True)
