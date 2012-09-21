@@ -155,7 +155,8 @@ class TestBatch(JsonHolder):
   def set_info(self, load_errors, test_unit_methods, conf):
     """Sets batch information.
 
-    This information can be retrieved as JSON using get_json().
+    This information can be retrieved as JSON using get_json().  This will also
+    set num_units according to the size of test_unit_methods.
 
     Args:
       load_errors: A list of (object name, error string) pairs for load errors.
@@ -165,6 +166,7 @@ class TestBatch(JsonHolder):
     """
     utils.check_type(load_errors, 'load_errors', list)
     utils.check_type(test_unit_methods, 'test_unit_methods', dict)
+    self.num_units = len(test_unit_methods)
     data = {'num_units': self.num_units,
             'load_errors': load_errors,
             'test_unit_methods': test_unit_methods,

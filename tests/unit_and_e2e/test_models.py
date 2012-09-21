@@ -134,7 +134,7 @@ class TestBatchTest(unittest.TestCase, utils.MockAttributeMixin):
            'test_unit_methods': test_unit_methods}, data)
       self.did_set = True
 
-    batch = models.TestBatch(fullname='tests', num_units=2)
+    batch = models.TestBatch(fullname='tests')
     batch.put()
     batch.set_info(load_errors, test_unit_methods, self.config)
     self.assertTrue(self.did_set)

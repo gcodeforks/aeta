@@ -29,6 +29,7 @@ Operation:
 
 __author__ = 'jacobltaylor@gmail.com (Jacob Taylor)'
 
+import logging
 import os
 import StringIO
 import sys
@@ -84,6 +85,16 @@ def _run_test_and_capture_output(test):
   return testresult, output.getvalue()
 
 
+def _this_task_has_failed_before():
+  """Determines if the current task has failed before.
+
+  Returns:
+    True if this code is executing in a task that failed before and is
+        retrying, False otherwise.
+  """
+  return int(os.environ.get('X-AppEngine-TaskRetryCount', '0')) > 0
+
+
 def _run_test_unit(fullname, task_key, conf):
   """Runs a single test unit based on a RunTestUnitTask.
 
@@ -96,13 +107,25 @@ def _run_test_unit(fullname, task_key, conf):
     conf: The configuration to use.
   """
   ctx_options = models.get_ctx_options(conf)
+  task = models.RunTestUnitTask(key=task_key, fullname=fullname)
   load_errors = []
+  if _this_task_has_failed_before():
+    # This will appear to the user as a "load error" in the test.
+    msg = 'Unknown error running test %s.  See log for details.' % fullname
+    load_errors.append((fullname, msg))
+    try:
+      task.set_test_result(load_errors, unittest.TestResult(), '', conf)
+      task.put(**ctx_options)
+    # pylint: disable-msg=W0703
+    except:
+      msg = 'Error writing message about the test %s that failed!' % fullname
+      logging.exception(msg)
+    return
   test = logic.get_requested_object(fullname, conf)
   suite = test.get_suite(conf, load_errors)
   # Since the test is a TestSuite, its run method will handle all the
   # administrative work involved in setUpModule, setUpClass, skipping, etc.
   result, output = _run_test_and_capture_output(suite)
-  task = models.RunTestUnitTask(key=task_key, fullname=fullname)
   task.set_test_result(load_errors, result, output, conf)
   task.put(**ctx_options)
 
@@ -150,10 +173,22 @@ def _initialize_batch(fullname, batch_key, conf):
   """
   ctx_options = models.get_ctx_options(conf)
   errors_out = []
+  batch = models.TestBatch(key=batch_key, fullname=fullname)
+  if _this_task_has_failed_before():
+    # This will appear to the user as a "load error" in the batch.
+    msg = ('Unknown error initializing batch %s.  See log for details.' %
+           fullname)
+    errors_out.append((fullname, msg))
+    try:
+      batch.set_info(errors_out, {}, conf)
+      batch.put(**ctx_options)
+    # pylint: disable-msg=W0703
+    except:
+      msg = 'Error writing message about the batch %s that failed!' % fullname
+      logging.exception(msg)
+    return
   test = logic.get_requested_object(fullname, conf)
   test_units = test.get_units(conf, errors_out)
-  batch = models.TestBatch(key=batch_key, fullname=fullname,
-                           num_units=len(test_units))
   test_unit_methods = {}
   tasks = []
   defer_calls = []

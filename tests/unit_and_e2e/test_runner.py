@@ -17,6 +17,7 @@
 __author__ = 'jacobltaylor@google.com (Jacob Taylor)'
 
 import copy
+import os
 import sys
 import time
 import unittest
@@ -104,6 +105,24 @@ class RunTestAndCaptureOutputTest(unittest.TestCase):
     self.assertTrue(expected_output in output)
 
 
+class TaskHasFailedTest(unittest.TestCase, utils.MockAttributeMixin):
+  """Tests for _this_task_has_failed_before."""
+
+  def setUp(self):
+    self.environ = {'X-AppEngine-TaskRetryCount': '0'}
+    self.mock(os, 'environ')(self.environ)
+
+  def tearDown(self):
+    self.tear_down_attributes()
+
+  def test_success(self):
+    self.assertEqual(False, runner._this_task_has_failed_before())
+
+  def test_failed(self):
+    self.environ['X-AppEngine-TaskRetryCount'] = '1'
+    self.assertEqual(True, runner._this_task_has_failed_before())
+
+
 class RunTestUnitTest(unittest.TestCase, utils.MockAttributeMixin):
   """Tests for _run_test_unit."""
 
@@ -178,6 +197,18 @@ class RunTestUnitTest(unittest.TestCase, utils.MockAttributeMixin):
     self.test_method_names = ['test_one_unit', 'test_two_units']
     self.load_errors = [('badmodule', 'ImportError')]
     self.check_run_test_unit(0)
+
+  def test_retried(self):
+    self.mock(runner, '_this_task_has_failed_before')(lambda: True)
+    self.batch = models.TestBatch(fullname='tests', num_units=1)
+    self.batch.put()
+    self.test_fullname = 'something.RunTestUnitTest'
+    task_key = models.RunTestUnitTask.get_key(self.batch.key, 0)
+    runner._run_test_unit(self.test_fullname, task_key, self.config)
+    task = task_key.get()
+    json = task.get_json()
+    self.assertTrue(isinstance(json, dict))
+    self.assertEqual(1, len(json['load_errors']))
 
 
 class DeleteBatchTest(unittest.TestCase, utils.MockAttributeMixin):
@@ -332,6 +363,16 @@ class InitializeBatchTest(unittest.TestCase, utils.TestDataMixin,
     self.fullname = 'tests'
     self.test_unit_methods = {'tests.module': ['tests.module.Case.method']}
     self.check_initialize_batch()
+
+  def test_retried(self):
+    self.mock(runner, '_this_task_has_failed_before')(lambda: True)
+    self.batch = models.TestBatch(fullname='tests')
+    self.batch.put()
+    self.test_fullname = 'something.RunTestUnitTest'
+    runner._initialize_batch(self.batch.fullname, self.batch.key, self.config)
+    json = self.batch.key.get().get_json()
+    self.assertTrue(isinstance(json, dict))
+    self.assertEqual(1, len(json['load_errors']))
 
 
 class StartBatchTest(unittest.TestCase, utils.MockAttributeMixin):
